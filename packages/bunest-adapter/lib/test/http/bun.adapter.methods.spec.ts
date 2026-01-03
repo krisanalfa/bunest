@@ -1,7 +1,7 @@
 /* eslint-disable sonarjs/no-clear-text-protocols */
 /* eslint-disable sonarjs/no-nested-functions */
 /* eslint-disable @typescript-eslint/dot-notation */
-/* eslint-disable @typescript-eslint/no-confusing-void-expression */
+
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
 /* eslint-disable @typescript-eslint/no-empty-function */
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -219,6 +219,35 @@ describe('BunAdapter Methods', () => {
       expect(() => (server as any).removeListener?.('error', () => {})).not.toThrow()
       const address = (server as any).address?.()
       expect(address).toBeDefined()
+    })
+
+    it('should return correct adapter type', () => {
+      const adapter = new BunAdapter()
+      expect(adapter.getType()).toBe('bun')
+    })
+
+    it('should have address method on actual server after listen', async () => {
+      const moduleRef = await Test.createTestingModule({
+        controllers: [AdapterTestController],
+      }).compile()
+
+      const app = moduleRef.createNestApplication(new BunAdapter())
+      // Use port 0 to let the OS assign a random available port
+      await app.listen(0, '127.0.0.1')
+
+      const adapter = app.getHttpAdapter() as unknown as BunAdapter
+      const server = adapter.getHttpServer()
+
+      // Test that address property is a getter that returns an object
+      expect((server as any).address).toBeDefined()
+      expect(typeof (server as any).address).toBe('object')
+
+      const addressObj = (server as any).address
+      expect(addressObj.address).toBeDefined()
+      expect(addressObj.port).toBeDefined()
+      expect(typeof addressObj.port).toBe('number')
+
+      await app.close()
     })
   })
 

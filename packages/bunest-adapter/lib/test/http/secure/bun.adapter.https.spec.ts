@@ -1,8 +1,9 @@
 import { Controller, Get, INestApplication, Req } from '@nestjs/common'
+import { Server, randomUUIDv7 } from 'bun'
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
-import { Server } from 'bun'
 import { Test } from '@nestjs/testing'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 import { BunAdapter } from '../../../bun.adapter.js'
 import { BunRequest } from '../../../bun.request.js'
@@ -101,6 +102,39 @@ describe('Bun HTTPS Adapter', () => {
 
     afterAll(async () => {
       await app.close()
+    })
+  })
+
+  describe('Unix Socket Support with HTTPS', () => {
+    const socket = join(tmpdir(), `${randomUUIDv7()}.sock`)
+    let app: INestApplication<Server<unknown>>
+
+    beforeAll(async () => {
+      const moduleRef = await Test.createTestingModule({
+        controllers: [DummyController],
+      }).compile()
+      app = moduleRef.createNestApplication(new BunAdapter({
+        tls: {
+          cert: Bun.file(join(__dirname, 'localhost.crt')),
+          key: Bun.file(join(__dirname, 'localhost.key')),
+        },
+      }))
+      await app.listen(socket)
+    })
+
+    it('should handle HTTPS requests via Unix socket', async () => {
+      const response = await fetch('https://localhost', {
+        unix: socket,
+        tls: { rejectUnauthorized: false },
+      })
+      expect(response.status).toBe(200)
+      const data = await response.json() as { message: string }
+      expect(data).toEqual({ message: 'Hello, Secure World!' })
+    })
+
+    afterAll(async () => {
+      await app.close()
+      await Bun.file(socket).delete()
     })
   })
 })

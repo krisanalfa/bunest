@@ -14,9 +14,7 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "declaration": true,
-    "types": [
-      "bun-types" // add Bun global
-    ],
+    "types": ["bun"],
     "baseUrl": ".",
     "paths": {
       "@packages/*": ["packages/*"]
