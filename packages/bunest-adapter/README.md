@@ -2,6 +2,44 @@
 
 This project provides a native Bun adapter for NestJS, allowing developers to leverage the performance benefits of the Bun runtime while using the powerful features of the NestJS framework.
 
+## Table of Contents
+
+- [Features](#features)
+  - [Native Bun adapter for NestJS](#native-bun-adapter-for-nestjs)
+  - [Full NestJS Feature Support](#full-nestjs-feature-support)
+    - [Controllers & HTTP Methods](#controllers--http-methods)
+    - [Middleware](#middleware)
+    - [Guards](#guards)
+    - [Interceptors](#interceptors)
+    - [Exception Filters](#exception-filters)
+    - [Validation](#validation)
+    - [File Uploads](#file-uploads)
+    - [Streaming Responses](#streaming-responses)
+    - [Versioning](#versioning)
+    - [CORS](#cors)
+    - [Cookies](#cookies)
+    - [Popular Express Middleware](#popular-express-middleware)
+  - [Bun File API Support](#bun-file-api-support)
+    - [BunFileInterceptor](#bunfileinterceptor)
+  - [WebSocket Support](#websocket-support)
+    - [Basic WebSocket Gateway](#basic-websocket-gateway)
+    - [WebSocket with Guards](#websocket-with-guards)
+    - [WebSocket with Pipes](#websocket-with-pipes)
+    - [WebSocket with Exception Filters](#websocket-with-exception-filters)
+    - [Broadcasting Messages](#broadcasting-messages)
+    - [Secure WebSocket (WSS)](#secure-websocket-wss)
+    - [Limitations](#limitations)
+  - [HTTPS](#https)
+  - [Code Quality](#code-quality)
+- [Request / Response Objects](#request--response-objects)
+  - [BunRequest](#bunrequest)
+  - [BunResponse](#bunresponse)
+- [Benchmark Results](#benchmark-results)
+  - [Running Benchmarks](#running-benchmarks)
+- [Contributing](#contributing)
+- [Future Plans](#future-plans)
+- [License](#license)
+
 ## Features
 
 ### Native Bun adapter for NestJS
@@ -442,6 +480,343 @@ Tested and working with:
 - `cors` - CORS handling
 - And most other Express-compatible middleware
 
+### WebSocket Support
+
+The Bun adapter provides full WebSocket support using Bun's native WebSocket implementation. The `BunWsAdapter` enables real-time, bidirectional communication between clients and servers with excellent performance.
+
+#### Basic WebSocket Gateway
+
+Create WebSocket gateways using NestJS decorators:
+
+```ts
+import { BunWsAdapter, BunAdapter } from "@krisanalfa/bunest-adapter";
+import {
+  WebSocketGateway,
+  SubscribeMessage,
+  MessageBody,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  ConnectedSocket,
+} from "@nestjs/websockets";
+import { ServerWebSocket } from "bun";
+
+@WebSocketGateway({ cors: true })
+class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  handleConnection(client: ServerWebSocket) {
+    client.send(JSON.stringify({ event: "welcome", data: "Welcome!" }));
+  }
+
+  handleDisconnect(client: ServerWebSocket) {
+    console.log("Client disconnected");
+  }
+
+  @SubscribeMessage("message")
+  handleMessage(@MessageBody() data: string) {
+    return {
+      event: "message",
+      data: `Received: ${data}`,
+    };
+  }
+}
+
+// Enable WebSocket support in your application
+const app = await NestFactory.create(AppModule, new BunAdapter());
+app.useWebSocketAdapter(new BunWsAdapter(app));
+await app.listen(3000);
+```
+
+Connect from the client:
+
+```ts
+const socket = new WebSocket("ws://localhost:3000");
+
+socket.onopen = () => {
+  socket.send(JSON.stringify({ event: "message", data: "Hello!" }));
+};
+
+socket.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log(data); // { event: 'message', data: 'Received: Hello!' }
+};
+```
+
+#### WebSocket with Guards
+
+Protect WebSocket endpoints with guards:
+
+```ts
+import { CanActivate, ExecutionContext, Injectable } from "@nestjs/common";
+import { WsException } from "@nestjs/websockets";
+
+@Injectable()
+class WsAuthGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const data = context.switchToWs().getData<{ token?: string }>();
+
+    if (data.token !== "valid-token") {
+      throw new WsException("Unauthorized");
+    }
+
+    return true;
+  }
+}
+
+@WebSocketGateway()
+@UseGuards(WsAuthGuard)
+class ProtectedGateway {
+  @SubscribeMessage("protected")
+  handleProtected(@MessageBody() data: { message: string }) {
+    return {
+      event: "protected",
+      data: `Protected message: ${data.message}`,
+    };
+  }
+}
+```
+
+#### WebSocket with Pipes
+
+Validate WebSocket messages using pipes:
+
+```ts
+import { UsePipes, ValidationPipe } from "@nestjs/common";
+import { IsString, IsNotEmpty, MinLength } from "class-validator";
+
+class CreateMessageDto {
+  @IsString()
+  @IsNotEmpty()
+  @MinLength(3)
+  text!: string;
+}
+
+@WebSocketGateway()
+@UsePipes(
+  new ValidationPipe({
+    exceptionFactory: (errors) => new WsException(errors),
+  }),
+)
+class ValidationGateway {
+  @SubscribeMessage("createMessage")
+  handleCreateMessage(@MessageBody() dto: CreateMessageDto) {
+    return {
+      event: "messageCreated",
+      data: dto.text,
+    };
+  }
+}
+```
+
+#### WebSocket with Exception Filters
+
+Handle WebSocket exceptions with custom filters:
+
+```ts
+import { Catch, ArgumentsHost, WsExceptionFilter } from "@nestjs/common";
+import { WsException } from "@nestjs/websockets";
+import { ServerWebSocket } from "bun";
+
+@Catch(WsException)
+class WsExceptionsFilter implements WsExceptionFilter {
+  catch(exception: WsException, host: ArgumentsHost) {
+    const client = host.switchToWs().getClient<ServerWebSocket>();
+    const error = exception.getError();
+    const details = typeof error === "object" ? error : { message: error };
+
+    client.send(
+      JSON.stringify({
+        event: "error",
+        data: {
+          message: "An error occurred",
+          details,
+        },
+      }),
+    );
+  }
+}
+
+@WebSocketGateway()
+@UseFilters(WsExceptionsFilter)
+class ErrorHandlingGateway {
+  @SubscribeMessage("risky")
+  handleRisky(@MessageBody() data: { shouldFail: boolean }) {
+    if (data.shouldFail) {
+      throw new WsException("Something went wrong");
+    }
+    return { event: "success", data: "OK" };
+  }
+}
+```
+
+#### Broadcasting Messages
+
+Broadcast messages to all connected clients using Bun's publish/subscribe system:
+
+```ts
+import {
+  WebSocketGateway,
+  WebSocketServer,
+  SubscribeMessage,
+  MessageBody,
+  ConnectedSocket,
+  OnGatewayConnection,
+} from "@nestjs/websockets";
+import { ServerWebSocket } from "bun";
+import { BunPreflightHttpServer } from "@krisanalfa/bunest-adapter";
+
+@Injectable() // Mandatory to be able to inject `BunPreflightHttpServer`
+@WebSocketGateway()
+class BroadcastGateway implements OnGatewayConnection {
+  @WebSocketServer()
+  server!: BunPreflightHttpServer; // Inject BunPreflightHttpServer
+
+  private readonly roomName = "global-room";
+
+  handleConnection(client: ServerWebSocket) {
+    // Subscribe client to room
+    client.subscribe(this.roomName);
+  }
+
+  @SubscribeMessage("broadcast")
+  handleBroadcast(
+    @MessageBody() message: string,
+    @ConnectedSocket() socket: ServerWebSocket,
+  ) {
+    // Get subscriber count
+    const count = this.server.getBunServer().subscriberCount(this.roomName);
+
+    // Publish to all subscribers in the room
+    socket.publishText(
+      this.roomName,
+      JSON.stringify({
+        event: "broadcast",
+        data: message,
+        subscribers: count,
+      }),
+    );
+  }
+}
+```
+
+**Key Features:**
+
+- **Native Performance** - Uses Bun's native WebSocket implementation for maximum speed
+- **NestJS Integration** - Full support for decorators, guards, pipes, and exception filters
+- **Pub/Sub Support** - Built-in support for broadcasting messages to multiple clients
+- **CORS Configuration** - Easy CORS setup for WebSocket connections
+- **HTTP + WebSocket** - Run both HTTP and WebSocket servers on the same port
+
+#### Secure WebSocket (WSS)
+
+The Bun adapter supports secure WebSocket connections (WSS) using TLS/SSL certificates. You can configure WSS in two ways:
+
+**Using BunAdapter constructor options:**
+
+```ts
+import { BunAdapter, BunWsAdapter } from "@krisanalfa/bunest-adapter";
+import { NestFactory } from "@nestjs/core";
+
+const app = await NestFactory.create(
+  AppModule,
+  new BunAdapter({
+    tls: {
+      cert: Bun.file("/path/to/cert.pem"),
+      key: Bun.file("/path/to/key.pem"),
+    },
+  }),
+);
+
+app.useWebSocketAdapter(new BunWsAdapter(app));
+await app.listen(3000);
+
+// Clients connect using wss:// protocol
+// const ws = new WebSocket('wss://localhost:3000');
+```
+
+**Using NestFactory.create httpsOptions:**
+
+```ts
+import { BunAdapter, BunWsAdapter } from "@krisanalfa/bunest-adapter";
+import { NestFactory } from "@nestjs/core";
+
+const app = await NestFactory.create(AppModule, new BunAdapter(), {
+  httpsOptions: {
+    cert: Bun.file("/path/to/cert.pem"),
+    key: Bun.file("/path/to/key.pem"),
+  },
+});
+
+app.useWebSocketAdapter(new BunWsAdapter(app));
+await app.listen(3000);
+```
+
+**Unix Socket Support with WSS:**
+
+You can also run secure WebSocket servers over Unix sockets:
+
+```ts
+import { BunAdapter, BunWsAdapter } from "@krisanalfa/bunest-adapter";
+import { NestFactory } from "@nestjs/core";
+
+const app = await NestFactory.create(
+  AppModule,
+  new BunAdapter({
+    tls: {
+      cert: Bun.file("/path/to/cert.pem"),
+      key: Bun.file("/path/to/key.pem"),
+    },
+  }),
+);
+
+app.useWebSocketAdapter(new BunWsAdapter(app));
+await app.listen("/tmp/secure-nestjs.sock");
+
+// Or use abstract namespace socket on Linux
+await app.listen("\0secure-nestjs-socket");
+```
+
+**Client Connection Example:**
+
+```ts
+// For development with self-signed certificates
+const ws = new WebSocket("wss://localhost:3000", {
+  tls: { rejectUnauthorized: false },
+});
+
+ws.onopen = () => {
+  console.log("Connected to secure WebSocket");
+  ws.send(JSON.stringify({ event: "message", data: "Hello WSS!" }));
+};
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  console.log("Received:", data);
+};
+```
+
+**Important Notes:**
+
+- WSS automatically uses the same port as your HTTPS server
+- The `wss://` protocol is used instead of `ws://` for secure connections
+- For production, use properly signed certificates from a trusted Certificate Authority
+- For development, you can use self-signed certificates with `rejectUnauthorized: false` on the client
+
+#### Limitations
+
+**Port Configuration:** The WebSocket server port will always be the same as the Bun HTTP server port. In standard NestJS, you can configure different ports via the `@WebSocketGateway` decorator's `port` option (see [NestJS WebSocket documentation](https://docs.nestjs.com/websockets/gateways#overview)), but with the Bun adapter, WebSocket connections must use the same port as your HTTP server. This is due to Bun's unified server architecture where HTTP and WebSocket upgrades are handled by the same server instance.
+
+```ts
+// This port option is ignored with BunWsAdapter
+@WebSocketGateway({ port: 8080 }) // ⚠️ Port option has no effect
+class ChatGateway {
+  // Gateway will use the same port as app.listen()
+}
+
+// WebSocket will be available on the same port as HTTP
+const app = await NestFactory.create(AppModule, new BunAdapter());
+app.useWebSocketAdapter(new BunWsAdapter(app));
+await app.listen(3000); // Both HTTP and WebSocket use port 3000
+```
+
 ### Bun File API Support
 
 This package provides first-class support for Bun's native [`BunFile`](https://bun.com/docs/runtime/file-io) API, enabling seamless file uploads and downloads using Bun's efficient file handling capabilities.
@@ -550,7 +925,7 @@ The Bun adapter is developed with high code quality standards, including:
 - Strict TypeScript typings
 - Strict linting rules (ESLint)
 - Comprehensive unit and integration tests
-- Coverage reports (>98% line coverage, >85% function coverage)
+- Coverage reports (>97% line coverage, >85% function coverage)
 
 ## Request / Response Objects
 
@@ -853,7 +1228,11 @@ class HybridController {
 
 ## Benchmark Results
 
-Tested on MacOS Sequoia (15.6.1), Apple M1 Max (64GB RAM), Bun 1.3.5, Node.js 20.10.0
+Tested on MacOS Sequoia (15.6.1), Apple M1 Max (64GB RAM), Bun 1.3.5, Node.js 20.10.0. All benchmarks run using [`oha`](https://github.com/hatoo/oha) tool with the following command:
+
+```
+oha -c 125 -n 1000000 --no-tui "http://127.0.0.1:3000/"
+```
 
 | Configuration                                                                     | Requests/sec | Compared to Pure Bun |
 | --------------------------------------------------------------------------------- | -----------: | -------------------: |
@@ -872,19 +1251,19 @@ To run the specific server benchmark, you can use predefined scripts in `package
 
 ```bash
 # Running native bun server benchmark
-bun run native
+bun run http:native
 
 # Running NestJS with Bun adapter benchmark
-bun run bun
+bun run http:bun
 
 # Running NestJS with Hono adapter benchmark
-bun run hono
+bun run http:hono
 
 # Running NestJS with Express adapter benchmark
-bun run express
+bun run http:express
 
 # Running NestJS with Node and Express benchmark
-bun run node
+bun run http:node
 ```
 
 All benchmarks use port `3000` by default. You can adjust the port in the respective benchmark files if needed.
@@ -895,7 +1274,6 @@ Contributions are welcome! Please open issues or submit pull requests for bug fi
 
 ## Future Plans
 
-- Support for WebSocket integration with Bun
 - Enhanced trusted proxy configuration for host header handling
 - Additional performance optimizations and benchmarks
 - Release automation via CI/CD pipelines

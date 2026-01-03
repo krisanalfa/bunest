@@ -6,19 +6,21 @@ import {
   ErrorHandler,
   RequestHandler,
 } from '@nestjs/common/interfaces/index.js'
+import { HeadersInit, BunRequest as NativeRequest, Serve, Server, ServerWebSocket, randomUUIDv7 } from 'bun'
 import {
   Logger,
   NestApplicationOptions,
   RequestMethod,
   VersioningOptions,
 } from '@nestjs/common'
-import { BunRequest as NativeRequest, Serve, Server, randomUUIDv7 } from 'bun'
 import { AbstractHttpAdapter } from '@nestjs/core'
 import { VersionValue } from '@nestjs/common/interfaces/version-options.interface.js'
 
+import { ServerOptions, WsOptions } from './internal.types.js'
 import { BunBodyParserMiddleware } from './bun.body-parser.middleware.js'
 import { BunCorsMiddleware } from './bun.cors.middleware.js'
 import { BunMiddlewareEngine } from './bun.middleware-engine.js'
+import { BunPreflightHttpServer } from './bun.preflight-http-server.js'
 import { BunRequest } from './bun.request.js'
 import { BunResponse } from './bun.response.js'
 import { BunVersionFilterMiddleware } from './bun.version-filter.middleware.js'
@@ -76,7 +78,20 @@ export class BunAdapter extends AbstractHttpAdapter<
     res.end({ message: 'Not Found' })
   }
 
-  constructor(private bunServeOptions: Pick<Serve.Options<unknown>, 'development' | 'maxRequestBodySize' | 'idleTimeout' | 'id' | 'tls'> = {
+  // WebSocket support
+  private readonly wsHandlers = {
+    onOpen: undefined as ((ws: ServerWebSocket<unknown>) => void) | undefined,
+    onMessage: undefined as ((ws: ServerWebSocket<unknown>, message: string | ArrayBuffer | Buffer | Buffer[], server: Server<unknown>) => void) | undefined,
+    onClose: undefined as ((ws: ServerWebSocket<unknown>, code: number, reason: string) => void) | undefined,
+  }
+
+  private readonly wsMiddlewareEngine = new BunMiddlewareEngine()
+  private wsOptions: WsOptions = {}
+  private useWs = false
+  private useWsCors = false
+  private wsCorsHeaders?: HeadersInit
+
+  constructor(protected bunServeOptions: ServerOptions = {
     development: false,
     id: randomUUIDv7(),
   }) {
@@ -110,17 +125,27 @@ export class BunAdapter extends AbstractHttpAdapter<
     this.middlewareEngine.useGlobal(middleware)
   }
 
+  // Generic method handler factory to reduce DRY
+  private createHttpMethodHandler(httpMethod: Serve.HTTPMethod) {
+    return (
+      pathOrHandler: unknown,
+      maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    ): void => {
+      const { path, handler } = this.parseRouteHandler(
+        pathOrHandler,
+        maybeHandler,
+      )
+      this.delegateRouteHandler(httpMethod, path, handler)
+    }
+  }
+
   get(handler: RequestHandler<BunRequest, BunResponse>): void
   get(path: unknown, handler: RequestHandler<BunRequest, BunResponse>): void
   get(
     pathOrHandler: unknown,
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    const { path, handler } = this.parseRouteHandler(
-      pathOrHandler,
-      maybeHandler,
-    )
-    this.delegateRouteHandler('GET', path, handler)
+    this.createHttpMethodHandler('GET')(pathOrHandler, maybeHandler)
   }
 
   post(handler: RequestHandler<BunRequest, BunResponse>): void
@@ -129,11 +154,7 @@ export class BunAdapter extends AbstractHttpAdapter<
     pathOrHandler: unknown,
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    const { path, handler } = this.parseRouteHandler(
-      pathOrHandler,
-      maybeHandler,
-    )
-    this.delegateRouteHandler('POST', path, handler)
+    this.createHttpMethodHandler('POST')(pathOrHandler, maybeHandler)
   }
 
   put(handler: RequestHandler<BunRequest, BunResponse>): void
@@ -142,11 +163,7 @@ export class BunAdapter extends AbstractHttpAdapter<
     pathOrHandler: unknown,
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    const { path, handler } = this.parseRouteHandler(
-      pathOrHandler,
-      maybeHandler,
-    )
-    this.delegateRouteHandler('PUT', path, handler)
+    this.createHttpMethodHandler('PUT')(pathOrHandler, maybeHandler)
   }
 
   patch(handler: RequestHandler<BunRequest, BunResponse>): void
@@ -155,11 +172,7 @@ export class BunAdapter extends AbstractHttpAdapter<
     pathOrHandler: unknown,
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    const { path, handler } = this.parseRouteHandler(
-      pathOrHandler,
-      maybeHandler,
-    )
-    this.delegateRouteHandler('PATCH', path, handler)
+    this.createHttpMethodHandler('PATCH')(pathOrHandler, maybeHandler)
   }
 
   delete(handler: RequestHandler<BunRequest, BunResponse>): void
@@ -168,11 +181,7 @@ export class BunAdapter extends AbstractHttpAdapter<
     pathOrHandler: unknown,
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    const { path, handler } = this.parseRouteHandler(
-      pathOrHandler,
-      maybeHandler,
-    )
-    this.delegateRouteHandler('DELETE', path, handler)
+    this.createHttpMethodHandler('DELETE')(pathOrHandler, maybeHandler)
   }
 
   head(handler: RequestHandler<BunRequest, BunResponse>): void
@@ -181,11 +190,7 @@ export class BunAdapter extends AbstractHttpAdapter<
     pathOrHandler: unknown,
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    const { path, handler } = this.parseRouteHandler(
-      pathOrHandler,
-      maybeHandler,
-    )
-    this.delegateRouteHandler('HEAD', path, handler)
+    this.createHttpMethodHandler('HEAD')(pathOrHandler, maybeHandler)
   }
 
   options(handler: RequestHandler<BunRequest, BunResponse>): void
@@ -194,110 +199,100 @@ export class BunAdapter extends AbstractHttpAdapter<
     pathOrHandler: unknown,
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    const { path, handler } = this.parseRouteHandler(
-      pathOrHandler,
-      maybeHandler,
-    )
-    this.delegateRouteHandler('OPTIONS', path, handler)
+    this.createHttpMethodHandler('OPTIONS')(pathOrHandler, maybeHandler)
+  }
+
+  // Helper to create unsupported method stubs
+  private createUnsupportedMethod() {
+    return (
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      pathOrHandler: unknown,
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    ): void => {
+      throw new Error('Not supported.')
+    }
   }
 
   all(handler: RequestHandler<BunRequest, BunResponse>): void
   all(path: unknown, handler: RequestHandler<BunRequest, BunResponse>): void
   all(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     pathOrHandler: unknown,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    throw new Error('Not supported.')
+    this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   propfind(handler: RequestHandler<BunRequest, BunResponse>): void
   propfind(path: unknown, handler: RequestHandler<BunRequest, BunResponse>): void
   propfind(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     pathOrHandler: unknown,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    throw new Error('Not supported.')
+    this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   proppatch(handler: RequestHandler<BunRequest, BunResponse>): void
   proppatch(path: unknown, handler: RequestHandler<BunRequest, BunResponse>): void
   proppatch(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     pathOrHandler: unknown,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    throw new Error('Not supported.')
+    this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   mkcol(handler: RequestHandler<BunRequest, BunResponse>): void
   mkcol(path: unknown, handler: RequestHandler<BunRequest, BunResponse>): void
   mkcol(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     pathOrHandler: unknown,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    throw new Error('Not supported.')
+    this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   copy(handler: RequestHandler<BunRequest, BunResponse>): void
   copy(path: unknown, handler: RequestHandler<BunRequest, BunResponse>): void
   copy(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     pathOrHandler: unknown,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    throw new Error('Not supported.')
+    this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   move(handler: RequestHandler<BunRequest, BunResponse>): void
   move(path: unknown, handler: RequestHandler<BunRequest, BunResponse>): void
   move(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     pathOrHandler: unknown,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    throw new Error('Not supported.')
+    this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   lock(handler: RequestHandler<BunRequest, BunResponse>): void
   lock(path: unknown, handler: RequestHandler<BunRequest, BunResponse>): void
   lock(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     pathOrHandler: unknown,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    throw new Error('Not supported.')
+    this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   unlock(handler: RequestHandler<BunRequest, BunResponse>): void
   unlock(path: unknown, handler: RequestHandler<BunRequest, BunResponse>): void
   unlock(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     pathOrHandler: unknown,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    throw new Error('Not supported.')
+    this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   search(handler: RequestHandler<BunRequest, BunResponse>): void
   search(path: unknown, handler: RequestHandler<BunRequest, BunResponse>): void
   search(
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     pathOrHandler: unknown,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    throw new Error('Not supported.')
+    this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -320,13 +315,16 @@ export class BunAdapter extends AbstractHttpAdapter<
   }
 
   initHttpServer(options: NestApplicationOptions) {
-    // Set dummy server to satisfy AbstractHttpAdapter requirements
-    this.setHttpServer({
-      once: () => { /* noop: Nest use this to listen for "error" event */ },
-      address: () => ({ address: '0.0.0.0', port: 0 }),
-      removeListener: () => { /* noop: Nest may use this to remove "error" listener */ },
-      stop: () => { /* noop */ },
-    } as unknown as Server<unknown>)
+    const preflightServer = new BunPreflightHttpServer({
+      getBunHttpServerInstance: () => this.getHttpServer(),
+      getBunServerOptions: () => this.bunServeOptions,
+      getWsHandlers: () => this.wsHandlers,
+      setWsOptions: (wsOptions: WsOptions) => {
+        this.wsOptions = wsOptions
+      },
+    })
+    // Hack to set the http server instance before listen is called
+    this.setHttpServer(preflightServer as unknown as Server<unknown>)
 
     if (options.httpsOptions) {
       this.bunServeOptions.tls = {
@@ -343,6 +341,8 @@ export class BunAdapter extends AbstractHttpAdapter<
         requestCert: options.httpsOptions.requestCert,
       }
     }
+
+    return preflightServer
   }
 
   getRequestHostname(request: BunRequest) {
@@ -501,7 +501,7 @@ export class BunAdapter extends AbstractHttpAdapter<
     maybeCallback?: () => void,
   ): void {
     const hostname
-      = typeof hostnameOrCallback === 'string' ? hostnameOrCallback : 'localhost'
+      = typeof hostnameOrCallback === 'string' ? hostnameOrCallback : (this.bunServeOptions.hostname ?? '127.0.0.1')
     const callback
       = typeof hostnameOrCallback === 'function'
         ? hostnameOrCallback
@@ -510,8 +510,18 @@ export class BunAdapter extends AbstractHttpAdapter<
     // Capture references for closure - avoid 'this' lookup in hot path
     const middlewareEngine = this.middlewareEngine
     const notFoundHandler = this.notFoundHandler
+    const wsHandlers = this.wsHandlers
+    const bunServeOptions = this.bunServeOptions
 
-    const fetch = async (request: NativeRequest): Promise<Response> => {
+    // Setup WebSocket if needed
+    this.setupWebSocketIfNeeded(wsHandlers, bunServeOptions)
+
+    const fetch = async (request: NativeRequest, server: Server<unknown>): Promise<Response> => {
+      // Just in case we don't have any controllers/routes registered, this will handle websocket upgrade requests
+      if (await this.upgradeWebSocket(request, server)) {
+        return undefined as unknown as Response
+      }
+
       const bunRequest = new BunRequest(request)
       const bunResponse = new BunResponse()
       // Find the actual route handler or fall back to notFoundHandler
@@ -527,46 +537,159 @@ export class BunAdapter extends AbstractHttpAdapter<
       return bunResponse.res()
     }
 
-    const omit = <T extends object, K extends keyof T>(
-      obj: T,
-      ...keys: K[]
-    ): Omit<T, K> => {
-      const result = { ...obj }
-      for (const key of keys) {
-        Reflect.deleteProperty(result, key)
-      }
-      return result
+    const server = this.createServer(port, hostname, bunServeOptions, fetch)
+    callback?.()
+    this.setHttpServer(server)
+  }
+
+  private static isNumericPort(value: string | number): value is number {
+    return typeof value === 'number' || !isNaN(Number(value))
+  }
+
+  private static omitKeys<T extends object, K extends keyof T>(
+    obj: T,
+    ...keys: K[]
+  ): Omit<T, K> {
+    const result = { ...obj }
+    for (const key of keys) {
+      Reflect.deleteProperty(result, key)
+    }
+    return result
+  }
+
+  private isWebSocketUpgradeRequest(request: NativeRequest): boolean {
+    const upgradeHeader = request.headers.get('upgrade')
+    const connectionHeader = request.headers.get('connection')
+    return !!(
+      upgradeHeader?.toLowerCase() === 'websocket'
+      && connectionHeader?.toLowerCase().includes('upgrade')
+    )
+  }
+
+  private async handleWebSocketCors(
+    request: NativeRequest,
+  ): Promise<HeadersInit> {
+    // Cache CORS headers to avoid regenerating for every upgrade
+    if (this.wsCorsHeaders) {
+      return this.wsCorsHeaders
     }
 
-    const server = typeof port === 'number' || !isNaN(Number(port))
+    const bunRequest = new BunRequest(request)
+    const bunResponse = new BunResponse()
+    await this.wsMiddlewareEngine.run({
+      req: bunRequest,
+      res: bunResponse,
+      method: bunRequest.method,
+      path: bunRequest.pathname,
+      requestHandler: (req, res) => {
+        res.end()
+      },
+    })
+    const response = await bunResponse.res()
+    this.wsCorsHeaders = response.headers
+    return this.wsCorsHeaders
+  }
+
+  private async upgradeWebSocket(
+    request: NativeRequest,
+    server: Server<unknown>,
+  ): Promise<boolean> {
+    if (!this.useWs || !this.isWebSocketUpgradeRequest(request)) {
+      return false
+    }
+
+    if (!this.useWsCors) {
+      return server.upgrade(
+        request, {
+          data: this.wsOptions.clientDataFactory
+            ? this.wsOptions.clientDataFactory(new BunRequest(request))
+            : {},
+        },
+      )
+    }
+
+    const headers = await this.handleWebSocketCors(request)
+    return server.upgrade(
+      request, {
+        headers,
+        data: this.wsOptions.clientDataFactory
+          ? this.wsOptions.clientDataFactory(new BunRequest(request))
+          : {},
+      },
+    )
+  }
+
+  private setupWebSocketIfNeeded(
+    wsHandlers: typeof this.wsHandlers,
+    bunServeOptions: ServerOptions,
+  ): void {
+    const useWs = !!wsHandlers.onOpen && !!wsHandlers.onMessage && !!wsHandlers.onClose
+    this.useWs = useWs
+
+    if (useWs) {
+      // Cache server reference to avoid repeated lookups
+      const getServer = this.getHttpServer.bind(this)
+      const onMessage = wsHandlers.onMessage
+      const onOpen = wsHandlers.onOpen
+      const onClose = wsHandlers.onClose
+
+      bunServeOptions.websocket = {
+        ...this.wsOptions,
+        message: (ws: ServerWebSocket<{
+          onMessageInternal?: (message: string | Buffer) => void
+        }>, message: string | Buffer) => {
+          // Call client-specific handler first if exists
+          ws.data.onMessageInternal?.(message)
+          // Then call global handler (for NestJS framework)
+          onMessage?.(ws, message, getServer())
+        },
+        open: (ws) => {
+          onOpen?.(ws)
+        },
+        close: (ws: ServerWebSocket<{
+          onCloseInternal?: () => void
+          onDisconnect?: (ws: ServerWebSocket<unknown>) => void
+        }>, code, reason) => {
+          // Call client-specific handlers
+          ws.data.onCloseInternal?.()
+          ws.data.onDisconnect?.(ws)
+          // Then call global handler (for NestJS framework)
+          onClose?.(ws, code, reason)
+        },
+      }
+    }
+
+    const useWsCors = typeof this.wsOptions.cors !== 'undefined'
+    this.useWsCors = useWsCors
+    if (useWsCors) {
+      const corsMiddleware = new BunCorsMiddleware({
+        corsOptions:
+          this.wsOptions.cors === true ? undefined : this.wsOptions.cors,
+      })
+      this.wsMiddlewareEngine.useGlobal(corsMiddleware.run.bind(corsMiddleware))
+    }
+  }
+
+  private createServer(
+    port: string | number,
+    hostname: string,
+    bunServeOptions: ServerOptions,
+    fetch: (request: NativeRequest, server: Server<unknown>) => Promise<Response>,
+  ): Server<unknown> {
+    return BunAdapter.isNumericPort(port)
       ? Bun.serve<unknown>({
-          ...this.bunServeOptions,
+          ...bunServeOptions,
           hostname,
           port,
           routes: this.routes,
           fetch,
         })
       : Bun.serve<unknown>({
-          ...omit(this.bunServeOptions, 'idleTimeout'),
+          ...BunAdapter.omitKeys(bunServeOptions, 'idleTimeout', 'port', 'hostname'),
           unix: port,
           routes: this.routes,
           fetch,
         })
-
-    if (typeof port === 'string' && isNaN(Number(port))) {
-      this.logger.log(`Bun server listening on unix socket: ${port}`)
-    }
-
-    callback?.()
-
-    // Add `address` method to match Node.js Server interface
-    Object.defineProperty(server, 'address', {
-      configurable: true,
-      enumerable: true,
-      get: () => ({ address: server.hostname, port: server.port }),
-    })
-
-    this.setHttpServer(server)
   }
 
   private delegateRouteHandler(
@@ -574,22 +697,52 @@ export class BunAdapter extends AbstractHttpAdapter<
     path: string,
     handler: RequestHandler<BunRequest, BunResponse>,
   ): void {
-    // Use null prototype object for route if not exists
+    this.ensureRouteExists(path)
+    const requestHandler = this.prepareRequestHandler(method, path, handler)
+    this.routes[path][method] = this.createRouteFetchHandler(
+      path,
+      method,
+      requestHandler,
+    )
+  }
+
+  private ensureRouteExists(path: string): void {
     if (!(path in this.routes)) {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
       this.routes[path] = Object.create(null)
     }
+  }
 
-    const requestHandler = !this.useVersioning
-      ? handler
-      // Create handler that wraps array + fallback into a single callable
-      // This avoids recreating the chained handler on every request
-      : this.createChainedHandlerForVersioningResolution(
-          this.createVersioningHandlers(method, path, handler),
-          this.notFoundHandler,
-        )
+  private prepareRequestHandler(
+    method: Serve.HTTPMethod,
+    path: string,
+    handler: RequestHandler<BunRequest, BunResponse>,
+  ): RequestHandler<BunRequest, BunResponse> {
+    if (!this.useVersioning) {
+      return handler
+    }
+    // Create handler that wraps array + fallback into a single callable
+    // This avoids recreating the chained handler on every request
+    return this.createChainedHandlerForVersioningResolution(
+      this.createVersioningHandlers(method, path, handler),
+      this.notFoundHandler,
+    )
+  }
 
-    this.routes[path][method] = async (request: NativeRequest): Promise<Response> => {
+  private createRouteFetchHandler(
+    path: string,
+    method: Serve.HTTPMethod,
+    requestHandler: RequestHandler<BunRequest, BunResponse>,
+  ): (request: NativeRequest, server: Server<unknown>) => Promise<Response> {
+    return async (
+      request: NativeRequest,
+      server: Server<unknown>,
+    ): Promise<Response> => {
+      // Just in case we have controllers/routes registered, this will handle websocket upgrade requests, but only for root path
+      if (path === '/' && (await this.upgradeWebSocket(request, server))) {
+        return undefined as unknown as Response
+      }
+
       const bunRequest = new BunRequest(request)
       const bunResponse = new BunResponse()
 

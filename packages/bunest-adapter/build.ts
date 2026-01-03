@@ -42,9 +42,11 @@ if (!tscResult.success) {
 const keepFiles = [
   'index.d.ts',
   'bun.adapter.d.ts',
+  'bun.ws-adapter.d.ts',
   'bun.request.d.ts',
   'bun.response.d.ts',
   'bun.file.interceptor.d.ts',
+  'bun.preflight-http-server.d.ts',
 ]
 
 const libDir = join('dist', 'lib')
