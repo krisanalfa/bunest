@@ -145,7 +145,7 @@ describe('BunAdapter Custom Versioning', () => {
         type: VersioningType.CUSTOM,
         extractor: (request: unknown) => {
           const req = request as BunRequest
-          const url = new URL(req.url)
+          const url = new URL(req.original().url)
           return url.searchParams.get('version') ?? ''
         },
       })

@@ -562,10 +562,10 @@ A high-performance request wrapper that provides lazy parsing and caching for op
 
 #### Properties
 
-- **`url`** - The complete request URL
+- **`url`** - The URL path and query string (e.g., "/api/users?page=1"). For the full URL including protocol and host, use `original().url`
 - **`method`** - HTTP method (GET, POST, etc.)
 - **`pathname`** - URL path (lazily parsed)
-- **`hostname`** - Host name without port (lazily parsed)
+- **`hostname`** - Host name without port (lazily parsed, respects X-Forwarded-Host header)
 - **`query`** - Parsed query parameters (lazily parsed)
 - **`headers`** - Request headers object with `.get()` method (lazily materialized)
 - **`params`** - Route parameters from URL patterns
@@ -575,9 +575,11 @@ A high-performance request wrapper that provides lazy parsing and caching for op
 - **`files`** - Multiple uploaded files (for multi-file uploads)
 - **`signal`** - AbortSignal for request cancellation
 - **`cookies`** - Cookie map for accessing request cookies
+- **`socket`** - Mock socket object for Node.js compatibility (contains `encrypted` property)
 
 #### Methods
 
+- **`original()`** - Get the underlying native Bun request object
 - **`get(key)`** - Get custom property stored in request
 - **`set(key, value)`** - Set custom property in request (useful for middleware)
 - **`json()`** - Parse body as JSON
@@ -603,7 +605,10 @@ class UsersController {
     const auth = req.headers.get("authorization");
     const contentType = req.headers["content-type"];
 
-    return { page, limit, auth };
+    // Check if connection is secure
+    const isSecure = req.socket.encrypted;
+
+    return { page, limit, auth, isSecure };
   }
 
   @Post()
@@ -612,9 +617,13 @@ class UsersController {
     console.log(req.body); // Same as dto
 
     // Access request info
+    console.log(req.url); // "/users" (pathname + search)
     console.log(req.pathname); // "/users"
     console.log(req.hostname); // "localhost"
     console.log(req.method); // "POST"
+
+    // Access native request for full URL
+    console.log(req.original().url); // "http://localhost:3000/users"
 
     return { created: dto };
   }
@@ -658,7 +667,7 @@ class ApiController {
 
 ### BunResponse
 
-A high-performance response builder that provides methods to construct responses with headers, cookies, and various body types. Uses lazy initialization and optimized response building for maximum performance.
+A high-performance response builder that provides methods to construct responses with headers, cookies, and various body types. Uses lazy initialization and optimized response building for maximum performance. Includes Node.js compatibility methods for seamless integration with existing middleware.
 
 #### Methods
 
@@ -673,9 +682,21 @@ A high-performance response builder that provides methods to construct responses
 - **`deleteCookie(name)`** - Delete a cookie by name
 - **`deleteCookie(options)`** - Delete a cookie with path/domain options
 - **`redirect(url, statusCode?)`** - Send redirect response (default 302)
-- **`end(body?)`** - End response and send body (auto-handles JSON, streams, binary, or even [`BunFile`](https://bun.com/docs/runtime/file-io))
+- **`write(chunk)`** - Write data to response stream (Node.js compatibility). Chunks are accumulated until `end()` is called
+- **`writeHead(statusCode, headers?)`** - Write status and headers (Node.js compatibility)
+- **`end(body?)`** - End response and send body. Auto-handles JSON, streams, binary, [`BunFile`](https://bun.com/docs/runtime/file-io), and accumulated chunks from `write()` calls
 - **`res()`** - Get the native Response promise
 - **`isEnded()`** - Check if response has been ended
+
+#### Node.js Compatibility Properties
+
+For compatibility with Node.js HTTP response objects and EventEmitter-based middleware:
+
+- **`destroyed`** - Always returns `false` (read-only property)
+- **`on(event, listener)`** - No-op stub for EventEmitter compatibility
+- **`off(event, listener)`** - No-op stub for EventEmitter compatibility
+- **`once(event, listener)`** - No-op stub for EventEmitter compatibility
+- **`destroy(error?)`** - No-op stub for Node.js compatibility
 
 #### Usage Examples
 
@@ -773,6 +794,23 @@ class FilesController {
   sendBinary(@Res() res: BunResponse) {
     const buffer = new Uint8Array([1, 2, 3, 4, 5]);
     res.setHeader("Content-Type", "application/octet-stream");
+
+  @Get("chunked")
+  sendChunked(@Res() res: BunResponse) {
+    // Node.js-style chunked response
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.write("Hello ");
+    res.write("World");
+    res.end("!"); // Sends "Hello World!"
+  }
+
+  @Get("mixed-chunks")
+  sendMixedChunks(@Res() res: BunResponse) {
+    // Mix of strings and binary data
+    res.write("Status: ");
+    res.write(new Uint8Array([50, 48, 48])); // "200" in bytes
+    res.end(); // Chunks are combined and sent
+  }
     res.end(buffer);
   }
 
@@ -860,6 +898,7 @@ Contributions are welcome! Please open issues or submit pull requests for bug fi
 - Support for WebSocket integration with Bun
 - Enhanced trusted proxy configuration for host header handling
 - Additional performance optimizations and benchmarks
+- Release automation via CI/CD pipelines
 
 ## License
 

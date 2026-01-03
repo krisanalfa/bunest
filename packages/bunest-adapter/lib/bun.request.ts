@@ -48,15 +48,46 @@ export class BunRequest {
   }
 
   /**
-   * Gets the full URL of the request.
+   * Gets a mock socket object for compatibility with Node.js middleware.
+   * Some middleware (like Better Auth) check req.socket.encrypted to determine if the connection is HTTPS.
    *
-   * @returns The complete URL string
+   * @returns A mock socket object with encrypted property
+   */
+  get socket(): { encrypted: boolean } {
+    return {
+      encrypted: this._parsedUrl.protocol === 'https:',
+    }
+  }
+
+  /**
+   * Gets the URL path and query string of the request.
+   * Returns the pathname + search params for Node.js/Express compatibility.
+   * For the full URL including protocol and host, use the original() method to access the native request.
+   *
+   * @returns The URL path and query string (e.g., "/api/users?page=1")
    * @example
    * ```typescript
-   * const url = request.url; // "http://localhost:3000/api/users?page=1"
+   * const url = request.url; // "/api/users?page=1"
+   * // For full URL: request.original().url // "http://localhost:3000/api/users?page=1"
    * ```
    */
-  get url(): string { return this._url }
+  get url(): string {
+    return this._parsedUrl.pathname + this._parsedUrl.search
+  }
+
+  /**
+   * Gets the original native Bun request object.
+   *
+   * @returns The underlying Bun request
+   * @example
+   * ```typescript
+   * const nativeReq = request.original();
+   * console.log(nativeReq.url); // Full URL with protocol and host
+   * ```
+   */
+  original(): NativeRequest {
+    return this.nativeRequest
+  }
 
   /**
    * Gets the pathname portion of the URL.

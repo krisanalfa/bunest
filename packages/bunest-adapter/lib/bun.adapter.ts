@@ -81,6 +81,29 @@ export class BunAdapter extends AbstractHttpAdapter<
     id: randomUUIDv7(),
   }) {
     super()
+    this.setInstance({
+      // Some libraries try to register middleware via `app.use(...)`
+      use: (maybePath: string | RequestHandler<BunRequest, BunResponse>, maybeHandler?: RequestHandler<BunRequest, BunResponse>): void => {
+        if (typeof maybePath === 'string') {
+          let path = maybePath
+          const handler = maybeHandler
+          if (!handler) {
+            throw new Error('Handler must be provided when path is a string.')
+          }
+          // Normalize wildcard patterns like /api/auth/* or /api/auth/*path
+          // Strip trailing /* or /*anything to treat as prefix match
+          if (path.includes('/*')) {
+            path = path.substring(0, path.indexOf('/*'))
+          }
+          this.logger.log(`Registering middleware for path: ${path}`)
+          this.middlewareEngine.useRoute('ALL', path, handler)
+        }
+        else {
+          const handler = maybePath
+          this.middlewareEngine.useGlobal(handler)
+        }
+      },
+    })
   }
 
   use(middleware: RequestHandler<BunRequest, BunResponse>): void {
@@ -491,13 +514,15 @@ export class BunAdapter extends AbstractHttpAdapter<
     const fetch = async (request: NativeRequest): Promise<Response> => {
       const bunRequest = new BunRequest(request)
       const bunResponse = new BunResponse()
+      // Find the actual route handler or fall back to notFoundHandler
+      const routeHandler = middlewareEngine.findRouteHandler(bunRequest.method, bunRequest.pathname) ?? notFoundHandler
       // Inline property access for hot path
       await middlewareEngine.run({
         req: bunRequest,
         res: bunResponse,
         method: bunRequest.method,
         path: bunRequest.pathname,
-        requestHandler: notFoundHandler,
+        requestHandler: routeHandler,
       })
       return bunResponse.res()
     }

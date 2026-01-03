@@ -1,16 +1,22 @@
-import { Controller, Get, INestApplication } from '@nestjs/common'
+import { Controller, Get, INestApplication, Req } from '@nestjs/common'
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { Server } from 'bun'
 import { Test } from '@nestjs/testing'
 import { join } from 'node:path'
 
 import { BunAdapter } from '../../../bun.adapter.js'
+import { BunRequest } from '../../../bun.request.js'
 
 @Controller()
 class DummyController {
   @Get()
   getRoot() {
     return { message: 'Hello, Secure World!' }
+  }
+
+  @Get('ping')
+  ping(@Req() request: BunRequest) {
+    return { message: 'pong', secure: request.socket.encrypted }
   }
 }
 
@@ -82,6 +88,15 @@ describe('Bun HTTPS Adapter', () => {
       expect(response.status).toBe(200)
       const data = await response.json() as { message: string }
       expect(data).toEqual({ message: 'Hello, Secure World!' })
+    })
+
+    it('should have encrypted socket in request', async () => {
+      const response = await fetch(`${url}/ping`, {
+        tls: { rejectUnauthorized: false },
+      })
+      expect(response.status).toBe(200)
+      const data = await response.json() as { message: string, secure: boolean }
+      expect(data).toEqual({ message: 'pong', secure: true })
     })
 
     afterAll(async () => {

@@ -23,13 +23,16 @@ export class BunResponse {
   private resolve!: (value: Response) => void
   private readonly response: Promise<Response>
   private readonly cookieMap = new CookieMap()
+  private static readonly textDecoder = new TextDecoder()
 
   // Use Map for O(1) header operations - faster than Headers for small sets
-  private _headers: Map<string, string> | null = null
+  private headers: Map<string, string> | null = null
   private statusCode = 200
   private ended = false
-  // Cache for cookie headers to avoid repeated string operations
-  private _cookieHeaderCache: string | null = null
+  // Cache for cookie headers to avoid repeated operations
+  private cookieHeaders: string[] | null = null
+  // Buffer for accumulated write() calls before end()
+  private chunks: (string | Uint8Array)[] = []
 
   constructor() {
     // Keep constructor minimal to reduce allocation overhead
@@ -40,7 +43,7 @@ export class BunResponse {
 
   // Lazy headers initialization
   private get headersMap(): Map<string, string> {
-    return this._headers ??= new Map()
+    return this.headers ??= new Map()
   }
 
   /**
@@ -72,8 +75,8 @@ export class BunResponse {
    */
   cookie(name: string, value: string): void
   cookie(...args: unknown[]): void {
-    // Invalidate cookie header cache when cookies change
-    this._cookieHeaderCache = null
+    // Invalidate cookie headers cache when cookies change
+    this.cookieHeaders = null
     if (args.length === 1) {
       this.cookieMap.set(args[0] as CookieInit | Cookie)
     }
@@ -147,6 +150,7 @@ export class BunResponse {
    * Ends the response and sends the body to the client.
    * Automatically handles JSON serialization, streams, and binary data.
    * Can only be called once per response.
+   * If write() was called before end(), accumulated chunks will be sent.
    *
    * @param body - The response body (JSON, string, Uint8Array, StreamableFile, or undefined)
    * @example
@@ -165,21 +169,45 @@ export class BunResponse {
    * // Send file stream
    * const file = new StreamableFile(stream);
    * response.end(file);
+   *
+   * // Send accumulated chunks from write() calls
+   * response.write('Hello ');
+   * response.write('World');
+   * response.end('!'); // Sends "Hello World!"
    * ```
    */
   end(body?: unknown): void {
     if (this.ended) return
     this.ended = true
-    /**
-     * According to RFC 6265, multiple Set-Cookie attributes should be separated by semicolons.
-     * @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie#syntax
-     * @see https://bun.com/docs/runtime/cookies#tosetcookieheaders-:-string[]
-     */
-    this._cookieHeaderCache ??= this.cookieMap.toSetCookieHeaders().join('; ')
-    if (this._cookieHeaderCache.length > 0) {
-      this.setHeader('set-cookie', this._cookieHeaderCache)
+
+    // Apply cookies to headers before sending response
+    this.applyCookieHeaders()
+
+    // If there are accumulated chunks from write() calls, combine them with the final body
+    if (this.chunks.length > 0) {
+      const finalBody = this.combineChunks(body)
+      // When chunks are combined, send as plain text/binary, not JSON
+      this.resolve(this.createResponse(finalBody))
+      return
     }
 
+    this.sendResponse(body)
+  }
+
+  /**
+   * Applies cookie headers to the response.
+   * According to RFC 6265, each cookie must be sent as a separate Set-Cookie header.
+   * @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie
+   */
+  private applyCookieHeaders(): void {
+    this.cookieHeaders ??= this.cookieMap.toSetCookieHeaders()
+    if (this.cookieHeaders.length > 0) {
+      // Multiple Set-Cookie headers are sent by joining with newline for HTTP/1.1 compatibility
+      this.setHeader('set-cookie', this.cookieHeaders.join('\n'))
+    }
+  }
+
+  private sendResponse(body?: unknown): void {
     // Fast path: check for most common case first (plain objects/arrays for JSON)
     // Avoid expensive instanceof checks when possible
     if (body !== null && typeof body === 'object') {
@@ -206,6 +234,68 @@ export class BunResponse {
     this.resolve(this.buildJsonResponse(body))
   }
 
+  // eslint-disable-next-line sonarjs/function-return-type
+  private combineChunks(finalChunk?: unknown): string | Uint8Array {
+    const hasStrings = this.chunks.some(chunk => typeof chunk === 'string')
+    const finalIsString = typeof finalChunk === 'string'
+
+    // If all chunks are strings, concatenate as strings
+    if (hasStrings || finalIsString) {
+      return this.combineAsString(finalChunk)
+    }
+
+    // All chunks are Uint8Arrays, concatenate as binary data
+    return this.combineAsBinary(finalChunk)
+  }
+
+  private combineAsString(finalChunk?: unknown): string {
+    const decoder = BunResponse.textDecoder
+    const parts: string[] = this.chunks.map(chunk =>
+      typeof chunk === 'string' ? chunk : decoder.decode(chunk),
+    )
+    if (finalChunk !== undefined && finalChunk !== null) {
+      if (typeof finalChunk === 'string') {
+        parts.push(finalChunk)
+      }
+      else if (finalChunk instanceof Uint8Array) {
+        parts.push(decoder.decode(finalChunk))
+      }
+      else if (typeof finalChunk === 'object') {
+        parts.push(JSON.stringify(finalChunk))
+      }
+      else {
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string
+        parts.push(String(finalChunk))
+      }
+    }
+    return parts.join('')
+  }
+
+  private combineAsBinary(finalChunk?: unknown): Uint8Array {
+    const binaryChunks = this.chunks as Uint8Array[]
+
+    // Calculate total length
+    let totalLength = 0
+    for (const chunk of binaryChunks) {
+      totalLength += chunk.length
+    }
+    if (finalChunk instanceof Uint8Array) {
+      totalLength += finalChunk.length
+    }
+
+    // Combine all chunks
+    const result = new Uint8Array(totalLength)
+    let offset = 0
+    for (const chunk of binaryChunks) {
+      result.set(chunk, offset)
+      offset += chunk.length
+    }
+    if (finalChunk instanceof Uint8Array) {
+      result.set(finalChunk, offset)
+    }
+    return result
+  }
+
   /**
    * Sets a response header.
    * Header names are automatically normalized to lowercase.
@@ -221,6 +311,155 @@ export class BunResponse {
    */
   setHeader(name: string, value: string): void {
     this.headersMap.set(name.toLowerCase(), value)
+  }
+
+  /**
+   * Writes the response status and headers (Node.js compatibility method).
+   * This method is provided for compatibility with Node.js HTTP response objects.
+   *
+   * @param statusCode - The HTTP status code
+   * @param headers - Optional headers to set
+   * @example
+   * ```typescript
+   * response.writeHead(200, { 'Content-Type': 'application/json' });
+   * response.writeHead(404);
+   * ```
+   */
+  writeHead(statusCode: number, headers?: Record<string, string>): void {
+    this.statusCode = statusCode
+    if (headers) {
+      for (const [name, value] of Object.entries(headers)) {
+        this.setHeader(name, value)
+      }
+    }
+  }
+
+  /**
+   * Stub method for Node.js EventEmitter compatibility.
+   * This is a no-op method provided for compatibility with Node.js HTTP response objects.
+   * Some middleware may try to listen for events like 'close' on the response object.
+   *
+   * @param event - The event name
+   * @param listener - The event listener function
+   * @returns This response object for chaining
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  on(event: string, listener: (...args: unknown[]) => void): this {
+    // No-op for compatibility
+    return this
+  }
+
+  /**
+   * Stub method for Node.js EventEmitter compatibility.
+   * This is a no-op method provided for compatibility with Node.js HTTP response objects.
+   *
+   * @param event - The event name
+   * @param listener - The event listener function
+   * @returns This response object for chaining
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  off(event: string, listener: (...args: unknown[]) => void): this {
+    // No-op for compatibility
+    return this
+  }
+
+  /**
+   * Property for Node.js HTTP response compatibility.
+   * Always returns false since Bun responses don't have a destroyed state.
+   */
+  readonly destroyed = false
+
+  /**
+   * Stub method for Node.js HTTP response compatibility.
+   * This is a no-op method provided for compatibility with Node.js HTTP response objects.
+   *
+   * @param error - Optional error
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  destroy(error?: Error): void {
+    // No-op for compatibility
+  }
+
+  /**
+   * Stub method for Node.js EventEmitter compatibility.
+   * This is a no-op method provided for compatibility with Node.js HTTP response objects.
+   *
+   * @param event - The event name
+   * @param listener - The event listener function
+   * @returns This response object for chaining
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  once(event: string, listener: (...args: unknown[]) => void): this {
+    // No-op for compatibility
+    return this
+  }
+
+  /**
+   * Stub method for Node.js HTTP response compatibility.
+   * This method writes data to the response stream.
+   * Data is accumulated in a buffer until end() is called.
+   * Mimics Node.js behavior where write() can be called multiple times.
+   *
+   * @param chunk - The data to write (string, Uint8Array, or other types that can be stringified)
+   * @returns true if the chunk was successfully buffered, false if the response has already ended
+   * @example
+   * ```typescript
+   * // Write string chunks
+   * response.write('Hello ');
+   * response.write('World');
+   * response.end('!'); // Sends "Hello World!"
+   *
+   * // Write binary chunks
+   * const chunk1 = new Uint8Array([1, 2, 3]);
+   * const chunk2 = new Uint8Array([4, 5, 6]);
+   * response.write(chunk1);
+   * response.write(chunk2);
+   * response.end(); // Sends combined binary data
+   *
+   * // Mixed usage (converts to string)
+   * response.write('Status: ');
+   * response.write(200);
+   * response.end(); // Sends "Status: 200"
+   * ```
+   */
+  write(chunk: unknown): boolean {
+    // Node.js behavior: writing after end() should be ignored and return false
+    if (this.ended) {
+      return false
+    }
+
+    // Handle string chunks
+    if (typeof chunk === 'string') {
+      this.chunks.push(chunk)
+      return true
+    }
+
+    // Handle binary chunks
+    if (chunk instanceof Uint8Array) {
+      this.chunks.push(chunk)
+      return true
+    }
+
+    // Handle Buffer (which is a Uint8Array subclass in Node.js)
+    if (chunk instanceof Buffer) {
+      this.chunks.push(new Uint8Array(chunk))
+      return true
+    }
+
+    // For other types, convert to string (Node.js behavior)
+    if (chunk != null) {
+      if (typeof chunk === 'object') {
+        this.chunks.push(JSON.stringify(chunk))
+      }
+      else {
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string
+        this.chunks.push(String(chunk))
+      }
+      return true
+    }
+
+    // Empty chunk is valid, just return true
+    return true
   }
 
   /**
@@ -240,7 +479,7 @@ export class BunResponse {
    * ```
    */
   getHeader(name: string): string | null {
-    return this._headers?.get(name.toLowerCase()) ?? null
+    return this.headers?.get(name.toLowerCase()) ?? null
   }
 
   /**
@@ -287,7 +526,7 @@ export class BunResponse {
    * ```
    */
   removeHeader(name: string): void {
-    this._headers?.delete(name.toLowerCase())
+    this.headers?.delete(name.toLowerCase())
   }
 
   /**
@@ -378,7 +617,7 @@ export class BunResponse {
   }
 
   private buildJsonResponse(body: unknown): Response {
-    const headers = this._headers
+    const headers = this.headers
     // Hot path: no headers
     if (headers === null || headers.size === 0) {
       return Response.json(body, { status: this.statusCode })
@@ -394,7 +633,7 @@ export class BunResponse {
   }
 
   private createResponse(body: BodyInit | null): Response {
-    const headers = this._headers
+    const headers = this.headers
     if (headers === null || headers.size === 0) {
       return new Response(body, { status: this.statusCode })
     }

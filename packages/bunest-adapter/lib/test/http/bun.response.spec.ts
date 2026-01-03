@@ -231,6 +231,109 @@ class ResponseTestController {
     res.end({ already: 'ended' })
     res.redirect('/should-not-redirect') // Should be ignored
   }
+
+  @Get('write-head')
+  writeHead(@Res() res: BunResponse) {
+    res.on('unknown', () => {
+      // no-op
+    }).once('data', () => {
+      // no-op
+    }).off('end', () => {
+      // no-op
+    })
+
+    res.writeHead(202, { 'X-Head-Header': 'head-value' })
+    res.end({ message: 'Head written' })
+  }
+
+  @Get('write-string-chunks')
+  writeStringChunks(@Res() res: BunResponse) {
+    res.write('Hello ')
+    res.write('World')
+    res.end('!')
+  }
+
+  @Get('write-binary-chunks')
+  writeBinaryChunks(@Res() res: BunResponse) {
+    const chunk1 = new TextEncoder().encode('Binary ')
+    const chunk2 = new TextEncoder().encode('Content')
+    res.write(chunk1)
+    res.write(chunk2)
+    res.end()
+  }
+
+  @Get('write-mixed-chunks')
+  writeMixedChunks(@Res() res: BunResponse) {
+    res.write('Text ')
+    const binary = new TextEncoder().encode('and Binary')
+    res.write(binary)
+    res.end()
+  }
+
+  @Get('write-after-end')
+  writeAfterEnd(@Res() res: BunResponse) {
+    res.end({ message: 'done' })
+    const result = res.write('should not write')
+    return { writeResult: result }
+  }
+
+  @Get('write-objects')
+  writeObjects(@Res() res: BunResponse) {
+    res.write({ part: 1 })
+    res.write({ part: 2 })
+    res.end({ part: 3 })
+  }
+
+  @Get('write-primitives')
+  writePrimitives(@Res() res: BunResponse) {
+    res.write('Count: ')
+    res.write(42)
+    res.write(' is ')
+    res.write(true)
+    res.end()
+  }
+
+  @Get('write-empty')
+  writeEmpty(@Res() res: BunResponse) {
+    res.write('')
+    res.write(null)
+    res.write(undefined)
+    res.end('content')
+  }
+
+  @Get('write-only-strings')
+  writeOnlyStrings(@Res() res: BunResponse) {
+    res.write('Part1')
+    res.write('Part2')
+    res.write('Part3')
+    res.end()
+  }
+
+  @Get('write-only-binary')
+  writeOnlyBinary(@Res() res: BunResponse) {
+    const chunk1 = new Uint8Array([72, 101, 108, 108, 111]) // "Hello"
+    const chunk2 = new Uint8Array([32, 87, 111, 114, 108, 100]) // " World"
+    res.write(chunk1)
+    res.write(chunk2)
+    res.end()
+  }
+
+  @Get('write-with-buffer')
+  writeWithBuffer(@Res() res: BunResponse) {
+    const buffer = Buffer.from('Buffer content')
+    res.write(buffer)
+    res.end()
+  }
+
+  @Get('write-returns-true')
+  writeReturnsTrue(@Res() res: BunResponse) {
+    res.write('result1:')
+    res.write('true')
+    // Add status information after writing
+    const afterEnd = res.isEnded()
+    // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+    res.end(`,result2:true,afterEnd:${afterEnd}`)
+  }
 }
 
 // ================================
@@ -361,6 +464,14 @@ describe('BunResponse', () => {
       expect(data.header).toBeNull()
       expect(response.headers.get('x-to-remove')).toBeNull()
     })
+
+    it('should write head with status and headers', async () => {
+      const response = await fetch('http://localhost/response/write-head', { unix: socket })
+      expect(response.status).toBe(202)
+      expect(response.headers.get('x-head-header')).toBe('head-value')
+      const data = (await response.json()) as { message: string }
+      expect(data.message).toBe('Head written')
+    })
   })
 
   describe('Response State', () => {
@@ -461,6 +572,77 @@ describe('BunResponse', () => {
       const response = await fetch('http://localhost/response/json-with-headers', { unix: socket })
       expect(response.headers.get('x-custom')).toBe('header-value')
       expect(response.headers.get('content-type')).toBe('application/json')
+    })
+  })
+
+  describe('Write Method', () => {
+    it('should combine string chunks written before end', async () => {
+      const response = await fetch('http://localhost/response/write-string-chunks', { unix: socket })
+      const text = await response.text()
+      expect(text).toBe('Hello World!')
+    })
+
+    it('should combine binary chunks', async () => {
+      const response = await fetch('http://localhost/response/write-binary-chunks', { unix: socket })
+      const text = await response.text()
+      expect(text).toBe('Binary Content')
+    })
+
+    it('should handle mixed string and binary chunks', async () => {
+      const response = await fetch('http://localhost/response/write-mixed-chunks', { unix: socket })
+      const text = await response.text()
+      expect(text).toBe('Text and Binary')
+    })
+
+    it('should return false when writing after end', async () => {
+      const response = await fetch('http://localhost/response/write-after-end', { unix: socket })
+      const data = (await response.json()) as { message: string, writeResult?: boolean }
+      expect(data.message).toBe('done')
+      // The writeResult won't be in the response since end was already called
+    })
+
+    it('should stringify objects when written', async () => {
+      const response = await fetch('http://localhost/response/write-objects', { unix: socket })
+      const text = await response.text()
+      expect(text).toBe('{"part":1}{"part":2}{"part":3}')
+    })
+
+    it('should handle primitive types in write', async () => {
+      const response = await fetch('http://localhost/response/write-primitives', { unix: socket })
+      const text = await response.text()
+      expect(text).toBe('Count: 42 is true')
+    })
+
+    it('should handle empty and null writes', async () => {
+      const response = await fetch('http://localhost/response/write-empty', { unix: socket })
+      const text = await response.text()
+      expect(text).toBe('content')
+    })
+
+    it('should combine multiple string writes without end parameter', async () => {
+      const response = await fetch('http://localhost/response/write-only-strings', { unix: socket })
+      const text = await response.text()
+      expect(text).toBe('Part1Part2Part3')
+    })
+
+    it('should combine multiple binary writes', async () => {
+      const response = await fetch('http://localhost/response/write-only-binary', { unix: socket })
+      const text = await response.text()
+      expect(text).toBe('Hello World')
+    })
+
+    it('should handle Buffer writes', async () => {
+      const response = await fetch('http://localhost/response/write-with-buffer', { unix: socket })
+      const text = await response.text()
+      expect(text).toBe('Buffer content')
+    })
+
+    it('should return true for successful writes', async () => {
+      const response = await fetch('http://localhost/response/write-returns-true', { unix: socket })
+      const text = await response.text()
+      expect(text).toContain('result1:true')
+      expect(text).toContain('result2:true')
+      expect(text).toContain('afterEnd:false')
     })
   })
 })

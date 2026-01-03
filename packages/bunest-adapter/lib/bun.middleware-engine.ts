@@ -57,6 +57,71 @@ export class BunMiddlewareEngine {
     this.notFoundHandler = handler
   }
 
+  findRouteHandler(method: string, path: string): MiddlewareHandler | null {
+    // Try exact match first (method-specific, then ALL)
+    const exactHandler = this.findExactRouteHandler(method, path)
+    if (exactHandler) return exactHandler
+
+    // Try prefix match
+    return this.findPrefixRouteHandler(method, path)
+  }
+
+  private findExactRouteHandler(method: string, path: string): MiddlewareHandler | null {
+    const exactKey = `${method}:${path}`
+    const exactMiddleware = this.routeMiddleware.get(exactKey)
+    if (exactMiddleware && exactMiddleware.length > 0) {
+      return exactMiddleware[exactMiddleware.length - 1]
+    }
+
+    const allExactKey = `ALL:${path}`
+    const allExactMiddleware = this.routeMiddleware.get(allExactKey)
+    if (allExactMiddleware && allExactMiddleware.length > 0) {
+      return allExactMiddleware[allExactMiddleware.length - 1]
+    }
+
+    return null
+  }
+
+  private findPrefixRouteHandler(method: string, path: string): MiddlewareHandler | null {
+    const methodMap = this.routeMiddlewareByMethod.get(method)
+    const allMethodMap = this.routeMiddlewareByMethod.get('ALL')
+
+    if (!methodMap && !allMethodMap) return null
+
+    const mapsToCheck: Map<string, MiddlewareHandler[]>[] = []
+    if (methodMap) mapsToCheck.push(methodMap)
+    if (allMethodMap) mapsToCheck.push(allMethodMap)
+
+    return this.findBestMatchInMaps(mapsToCheck, path)
+  }
+
+  private findBestMatchInMaps(
+    maps: Map<string, MiddlewareHandler[]>[],
+    path: string,
+  ): MiddlewareHandler | null {
+    let bestMatch: MiddlewareHandler | null = null
+    let bestMatchLength = 0
+    const pathLen = path.length
+
+    for (const map of maps) {
+      for (const [keyPath, middleware] of map) {
+        if (middleware.length === 0 || keyPath.length <= bestMatchLength) continue
+
+        if (this.isPrefixMatch(path, pathLen, keyPath)) {
+          bestMatch = middleware[middleware.length - 1]
+          bestMatchLength = keyPath.length
+        }
+      }
+    }
+
+    return bestMatch
+  }
+
+  private isPrefixMatch(path: string, pathLen: number, keyPath: string): boolean {
+    const keyPathLen = keyPath.length
+    return path === keyPath || (pathLen > keyPathLen && path.charCodeAt(keyPathLen) === 47 && path.startsWith(keyPath))
+  }
+
   async run(options: MiddlewareRunOptions): Promise<BunResponse> {
     try {
       const middlewares = this.getMiddlewareChain(options.method, options.path)
@@ -168,17 +233,21 @@ export class BunMiddlewareEngine {
         return
       }
 
-      // Process request handler at the end
+      // Process request handler at the end only if response hasn't been ended
       if (index === chainLength) {
         index++
-        const result = requestHandler(req, res, next) as unknown
-        if (result instanceof Promise) await result
-
-        // If after the handler next is called again, throw not found
-        if (index > chainLength) {
-          const result = this.notFoundHandler?.(req, res, noop) as unknown
+        // Skip handler if response already ended by middleware
+        if (!res.isEnded()) {
+          const result = requestHandler(req, res, next) as unknown
           if (result instanceof Promise) await result
         }
+        return
+      }
+
+      // If next is called after the handler, call not found handler
+      if (index > chainLength && !res.isEnded()) {
+        const result = this.notFoundHandler?.(req, res, noop) as unknown
+        if (result instanceof Promise) await result
       }
     }
 
