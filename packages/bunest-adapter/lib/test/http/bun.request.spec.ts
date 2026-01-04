@@ -128,6 +128,29 @@ class RequestTestController {
     const bytes = await req.bytes()
     return { bytesLength: bytes.length }
   }
+
+  @Get('event-emitter')
+  getEventEmitter(@Req() req: BunRequest) {
+    // Test on() method
+    const onResult = req.on('test', () => { /* no-op */ })
+    // Test once() method
+    const onceResult = req.once('test', () => { /* no-op */ })
+    // Test off() method
+    const offResult = req.off('test', () => { /* no-op */ })
+    // Test emit() method
+    const emitResult = req.emit('test', 'data')
+
+    return {
+      onSupported: typeof req.on === 'function',
+      onResult: onResult === req,
+      onceSupported: typeof req.once === 'function',
+      onceResult: onceResult === req,
+      offSupported: typeof req.off === 'function',
+      offResult: offResult === req,
+      emitSupported: typeof req.emit === 'function',
+      emitResult,
+    }
+  }
 }
 
 // ================================
@@ -351,6 +374,36 @@ describe('BunRequest', () => {
       })
       const data = (await response.json()) as { bytesLength: number }
       expect(data.bytesLength).toBe(4)
+    })
+  })
+
+  describe('EventEmitter compatibility', () => {
+    it('should support on() method for event listeners', async () => {
+      const response = await fetch('http://localhost/request/event-emitter', { unix: socket })
+      const data = (await response.json()) as { onSupported: boolean, onResult: boolean }
+      expect(data.onSupported).toBe(true)
+      expect(data.onResult).toBe(true)
+    })
+
+    it('should support once() method for event listeners', async () => {
+      const response = await fetch('http://localhost/request/event-emitter', { unix: socket })
+      const data = (await response.json()) as { onceSupported: boolean, onceResult: boolean }
+      expect(data.onceSupported).toBe(true)
+      expect(data.onceResult).toBe(true)
+    })
+
+    it('should support off() method for event listeners', async () => {
+      const response = await fetch('http://localhost/request/event-emitter', { unix: socket })
+      const data = (await response.json()) as { offSupported: boolean, offResult: boolean }
+      expect(data.offSupported).toBe(true)
+      expect(data.offResult).toBe(true)
+    })
+
+    it('should support emit() method and return true', async () => {
+      const response = await fetch('http://localhost/request/event-emitter', { unix: socket })
+      const data = (await response.json()) as { emitSupported: boolean, emitResult: boolean }
+      expect(data.emitSupported).toBe(true)
+      expect(data.emitResult).toBe(true)
     })
   })
 })

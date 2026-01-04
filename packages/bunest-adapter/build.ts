@@ -47,7 +47,8 @@ const keepFiles = [
   'bun.response.d.ts',
   'bun.file.interceptor.d.ts',
   'bun.preflight-http-server.d.ts',
-  'internal.types.d.ts',
+  'bun.server-instance.d.ts',
+  'bun.internal.types.d.ts',
 ]
 
 const libDir = join('dist', 'lib')

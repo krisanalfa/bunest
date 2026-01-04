@@ -24,6 +24,11 @@ export class BunResponse {
   private readonly response: Promise<Response>
   private readonly cookieMap = new CookieMap()
   private static readonly textDecoder = new TextDecoder()
+  /**
+   * Property for Node.js Writable stream compatibility.
+   * Indicates this object can be written to.
+   */
+  readonly writable = true
 
   // Use Map for O(1) header operations - faster than Headers for small sets
   private headers: Map<string, string> | null = null
@@ -33,6 +38,9 @@ export class BunResponse {
   private cookieHeaders: string[] | null = null
   // Buffer for accumulated write() calls before end()
   private chunks: (string | Uint8Array)[] = []
+  // Streaming support for SSE and other streaming scenarios
+  private streamWriter: WritableStreamDefaultWriter<Uint8Array> | null = null
+  private textEncoder = new TextEncoder()
 
   constructor() {
     // Keep constructor minimal to reduce allocation overhead
@@ -180,6 +188,27 @@ export class BunResponse {
     if (this.ended) return
     this.ended = true
 
+    // If we're in streaming mode, close the stream writer
+    if (this.streamWriter) {
+      try {
+        // Write final body if provided
+        if (body) {
+          const bytes = typeof body === 'string'
+            ? this.textEncoder.encode(body)
+            // eslint-disable-next-line sonarjs/no-nested-conditional
+            : body instanceof Uint8Array
+              ? body
+              : this.textEncoder.encode(JSON.stringify(body))
+          void this.streamWriter.write(bytes)
+        }
+        void this.streamWriter.close()
+      }
+      catch {
+        // Ignore errors on close
+      }
+      return
+    }
+
     // Apply cookies to headers before sending response
     this.applyCookieHeaders()
 
@@ -200,18 +229,23 @@ export class BunResponse {
    * @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Set-Cookie
    */
   private applyCookieHeaders(): void {
+    if (this.cookieMap.size === 0) return
     this.cookieHeaders ??= this.cookieMap.toSetCookieHeaders()
-    if (this.cookieHeaders.length > 0) {
-      // Multiple Set-Cookie headers are sent by joining with newline for HTTP/1.1 compatibility
-      this.setHeader('set-cookie', this.cookieHeaders.join('\n'))
-    }
+    // Multiple Set-Cookie headers are sent by joining with newline for HTTP/1.1 compatibility
+    this.setHeader('set-cookie', this.cookieHeaders.join('\n'))
   }
 
   private sendResponse(body?: unknown): void {
-    // Fast path: check for most common case first (plain objects/arrays for JSON)
-    // Avoid expensive instanceof checks when possible
+    // Hot path: plain objects/arrays for JSON (most common case)
+    // Check for special types first to avoid instanceof in common case
     if (body !== null && typeof body === 'object') {
-      // Check special types first with early returns
+      // Fast check: plain objects don't have these constructors
+      const ctor = body.constructor
+      if (ctor === Object || ctor === Array) {
+        this.resolve(this.buildJsonResponse(body))
+        return
+      }
+      // Special types (less common)
       if (body instanceof Uint8Array || body instanceof Blob) {
         this.resolve(this.createResponse(body))
         return
@@ -220,7 +254,7 @@ export class BunResponse {
         this.resolve(this.buildStreamableResponse(body))
         return
       }
-      // Default: treat as JSON-serializable object
+      // Fallback: treat as JSON-serializable object
       this.resolve(this.buildJsonResponse(body))
       return
     }
@@ -395,6 +429,29 @@ export class BunResponse {
   }
 
   /**
+   * Stub method for Node.js EventEmitter compatibility.
+   * This is a no-op method provided for compatibility with Node.js streams and HTTP response objects.
+   * Required when streams are piped to the response object (e.g., for SSE).
+   *
+   * @param event - The event name
+   * @param args - Event arguments
+   * @returns True to indicate the event was handled
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  emit(event: string, ...args: unknown[]): boolean {
+    // No-op for compatibility - return true to indicate event was handled
+    return true
+  }
+
+  /**
+   * Property for Node.js Writable stream compatibility.
+   * Indicates whether the stream has ended.
+   */
+  get writableEnded(): boolean {
+    return this.ended
+  }
+
+  /**
    * Stub method for Node.js HTTP response compatibility.
    * This method writes data to the response stream.
    * Data is accumulated in a buffer until end() is called.
@@ -422,12 +479,47 @@ export class BunResponse {
    * response.end(); // Sends "Status: 200"
    * ```
    */
+  // eslint-disable-next-line sonarjs/cognitive-complexity
   write(chunk: unknown): boolean {
     // Node.js behavior: writing after end() should be ignored and return false
     if (this.ended) {
       return false
     }
 
+    // Check if we should enter streaming mode (for SSE or other streaming scenarios)
+    // This happens when Content-Type is text/event-stream or when write() is called
+    // before any body has been set
+    const contentType = this.headers?.get('content-type') ?? ''
+    const isStreamingResponse = contentType.includes('text/event-stream') || contentType.includes('application/octet-stream')
+
+    if (isStreamingResponse && !this.streamWriter) {
+      // Initialize streaming mode
+      this.initializeStreamingMode()
+    }
+
+    // If we're in streaming mode, write directly to the stream
+    if (this.streamWriter) {
+      try {
+        const bytes = typeof chunk === 'string'
+          ? this.textEncoder.encode(chunk)
+          // eslint-disable-next-line sonarjs/no-nested-conditional
+          : chunk instanceof Uint8Array
+            ? chunk
+            // eslint-disable-next-line sonarjs/no-nested-conditional
+            : chunk instanceof Buffer
+              ? new Uint8Array(chunk)
+              : this.textEncoder.encode(JSON.stringify(chunk))
+
+        // Write to stream (this is synchronous in Bun)
+        void this.streamWriter.write(bytes)
+        return true
+      }
+      catch {
+        return false
+      }
+    }
+
+    // Otherwise, buffer the chunk (normal mode)
     // Handle string chunks
     if (typeof chunk === 'string') {
       this.chunks.push(chunk)
@@ -460,6 +552,22 @@ export class BunResponse {
 
     // Empty chunk is valid, just return true
     return true
+  }
+
+  /**
+   * Initializes streaming mode by creating a TransformStream and resolving the response.
+   * This is used for SSE and other streaming scenarios where data needs to be sent
+   * before end() is called.
+   */
+  private initializeStreamingMode(): void {
+    const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>()
+    this.streamWriter = writable.getWriter()
+
+    // Apply cookies and headers before resolving
+    this.applyCookieHeaders()
+
+    // Resolve the response with the readable stream
+    this.resolve(this.createResponse(readable))
   }
 
   /**
@@ -623,9 +731,7 @@ export class BunResponse {
       return Response.json(body, { status: this.statusCode })
     }
     // Set content-type only if not already set
-    if (!headers.has('content-type')) {
-      headers.set('content-type', JSON_CONTENT_TYPE)
-    }
+    headers.set('content-type', JSON_CONTENT_TYPE)
     return Response.json(body, {
       status: this.statusCode,
       headers: Object.fromEntries(headers),

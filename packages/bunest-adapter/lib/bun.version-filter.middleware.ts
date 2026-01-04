@@ -11,25 +11,16 @@ import { BunResponse } from './bun.response.js'
 
 type VersionHandler = (req: BunRequest, res: BunResponse, next: () => void) => unknown
 
-/**
- * Metadata attached to request for custom versioning two-pass execution
- */
-export interface CustomVersioningMeta {
-  _customVersioningPhase?: 'discovery' | 'execution'
-  _customVersioningCandidates?: Map<string, { priority: number, execute: () => unknown }>
-  _customVersioningBestCandidate?: string
-}
+/** Key constants for custom versioning metadata stored in request settings */
+const CUSTOM_VERSIONING_PHASE_KEY = '_cvp'
+const CUSTOM_VERSIONING_CANDIDATES_KEY = '_cvc'
+const CUSTOM_VERSIONING_BEST_CANDIDATE_KEY = '_cvb'
 
-/** Helper to execute handler and await if needed */
-async function executeHandler(handler: VersionHandler, req: BunRequest, res: BunResponse, next: () => void): Promise<unknown> {
-  const result = handler(req, res, next)
-  return result instanceof Promise ? await result : result
-}
+/** Type for custom versioning phase: 0 = discovery, 1 = execution */
+type CustomVersioningPhase = 0 | 1
 
-/** Helper to call next and await if needed */
-function callNext(next: () => void | Promise<void>): void | Promise<void> {
-  return next()
-}
+/** Type for custom versioning candidates map - stores only priority now */
+type CustomVersioningCandidates = Map<string, number>
 
 /**
  * Middleware for handling NestJS versioning in BunAdapter.
@@ -77,12 +68,6 @@ export class BunVersionFilterMiddleware {
       || (Array.isArray(version) && version.includes(VERSION_NEUTRAL))
   }
 
-  /** Extracts header value from request - optimized to use .get() directly */
-  private static getHeader(req: BunRequest, name: string): string | undefined {
-    // Headers.get() is case-insensitive per spec, so we only need one call
-    return req.headers.get(name) ?? undefined
-  }
-
   /** Creates a filter for Custom versioning (uses extractor function) */
   private static createCustomVersionFilter(
     handler: VersionHandler,
@@ -94,23 +79,29 @@ export class BunVersionFilterMiddleware {
     const versionSet = isVersionArray ? new Set(version as string[]) : null
     const singleVersion = isVersionArray ? null : version as string
 
-    return async (req, res, next) => {
+    return (req, res, next) => {
       const extracted = options.extractor(req)
-      const reqMeta = req as CustomVersioningMeta
 
-      // Initialize metadata on first handler
-      reqMeta._customVersioningPhase ??= 'discovery'
-      reqMeta._customVersioningCandidates ??= new Map()
+      // Initialize metadata on first handler using get/set
+      // Phase: 0 = discovery, 1 = execution
+      let phase = req.get<CustomVersioningPhase>(CUSTOM_VERSIONING_PHASE_KEY)
+      if (phase === undefined) {
+        phase = 0
+        req.set(CUSTOM_VERSIONING_PHASE_KEY, phase)
+      }
 
-      const isDiscovery = reqMeta._customVersioningPhase === 'discovery'
+      let candidates = req.get<CustomVersioningCandidates>(CUSTOM_VERSIONING_CANDIDATES_KEY)
+      if (!candidates) {
+        candidates = new Map()
+        req.set(CUSTOM_VERSIONING_CANDIDATES_KEY, candidates)
+      }
 
       // Inline findVersionMatch for performance
-      const extractedIsArray = Array.isArray(extracted)
-      const extractedVersions = extractedIsArray ? extracted : [extracted]
+      const extractedVersions = Array.isArray(extracted) ? extracted : [extracted]
       let match: string | undefined
       let matchIndex = -1
 
-      for (let i = 0; i < extractedVersions.length; i++) {
+      for (let i = 0, len = extractedVersions.length; i < len; i++) {
         const extractedVersion = extractedVersions[i]
         if (versionSet ? versionSet.has(extractedVersion) : extractedVersion === singleVersion) {
           match = extractedVersion
@@ -120,20 +111,21 @@ export class BunVersionFilterMiddleware {
       }
 
       if (match) {
-        if (isDiscovery) {
-          reqMeta._customVersioningCandidates.set(match, {
-            priority: matchIndex,
-            execute: () => handler(req, res, next),
-          })
-          return callNext(next)
+        // Discovery phase (0)
+        if (phase === 0) {
+          // Only store priority, not the execute closure
+          candidates.set(match, matchIndex)
+          next()
+          return
         }
 
-        if (reqMeta._customVersioningBestCandidate === match) {
-          return executeHandler(handler, req, res, next)
+        // Execution phase (1) - check if this is the best candidate
+        if (req.get<string>(CUSTOM_VERSIONING_BEST_CANDIDATE_KEY) === match) {
+          return handler(req, res, next)
         }
       }
 
-      return callNext(next)
+      next()
     }
   }
 
@@ -146,10 +138,11 @@ export class BunVersionFilterMiddleware {
     // Pre-compute at filter creation time
     const acceptsNeutral = this.computeAcceptsNeutral(version)
     const versionMatches = this.createVersionMatcher(version)
-    const keyLength = options.key.length
+    const key = options.key
+    const keyLength = key.length
 
-    return async (req, res, next) => {
-      const acceptHeader = this.getHeader(req, 'accept')
+    return (req, res, next) => {
+      const acceptHeader = req.headers.get('accept')
 
       if (acceptHeader) {
         // Find semicolon position without creating intermediate array
@@ -157,22 +150,23 @@ export class BunVersionFilterMiddleware {
         if (semiIndex !== -1) {
           const versionPart = acceptHeader.substring(semiIndex + 1).trim()
           // Find the key and extract version after it
-          const keyIndex = versionPart.indexOf(options.key)
+          const keyIndex = versionPart.indexOf(key)
           if (keyIndex !== -1) {
             const headerVersion = versionPart.substring(keyIndex + keyLength)
             if (versionMatches(headerVersion)) {
-              return executeHandler(handler, req, res, next)
+              return handler(req, res, next)
             }
-            return callNext(next)
+            next()
+            return
           }
         }
       }
 
       // No version param found
       if (acceptsNeutral) {
-        return executeHandler(handler, req, res, next)
+        return handler(req, res, next)
       }
-      return callNext(next)
+      next()
     }
   }
 
@@ -190,11 +184,14 @@ export class BunVersionFilterMiddleware {
     const resolvedDefault = this.resolveDefaultVersion(version, defaultVersion)
     const headerName = options.header
 
-    return async (req, res, next) => {
-      let headerVersion: string | undefined = this.getHeader(req, headerName)?.trim()
+    return (req, res, next) => {
+      let headerVersion: string | undefined = req.headers.get(headerName) ?? undefined
 
-      // Treat empty or whitespace-only as undefined
-      if (headerVersion === '') headerVersion = undefined
+      // Trim and treat empty as undefined
+      if (headerVersion) {
+        headerVersion = headerVersion.trim()
+        if (headerVersion === '') headerVersion = undefined
+      }
 
       // Apply default version if no header provided
       headerVersion ??= resolvedDefault
@@ -203,15 +200,16 @@ export class BunVersionFilterMiddleware {
       if (!headerVersion) {
         // Handle VERSION_NEUTRAL default or neutral-accepting handler
         if ((hasNeutralDefault || !defaultVersion) && acceptsNeutral) {
-          return executeHandler(handler, req, res, next)
+          return handler(req, res, next)
         }
-        return callNext(next)
+        next()
+        return
       }
 
       if (versionMatches(headerVersion)) {
-        return executeHandler(handler, req, res, next)
+        return handler(req, res, next)
       }
-      return callNext(next)
+      next()
     }
   }
 
@@ -237,16 +235,19 @@ export class BunVersionFilterMiddleware {
     return undefined
   }
 
-  /** Selects the best custom versioning candidate after discovery phase */
+  /** Selects the best custom versioning candidate after discovery phase - returns null if not in discovery or no candidates */
   static selectBestCustomVersionCandidate(req: BunRequest): string | null {
-    const { _customVersioningPhase: phase, _customVersioningCandidates: candidates } = req as CustomVersioningMeta
+    // Phase: 0 = discovery, 1 = execution, undefined = not custom versioning
+    const phase = req.get<CustomVersioningPhase>(CUSTOM_VERSIONING_PHASE_KEY)
+    if (phase !== 0) return null
 
-    if (phase !== 'discovery' || !candidates?.size) return null
+    const candidates = req.get<CustomVersioningCandidates>(CUSTOM_VERSIONING_CANDIDATES_KEY)
+    if (!candidates?.size) return null
 
     let bestVersion: string | null = null
     let bestPriority = Infinity
 
-    for (const [version, { priority }] of candidates) {
+    for (const [version, priority] of candidates) {
       if (priority < bestPriority) {
         bestPriority = priority
         bestVersion = version
@@ -258,14 +259,16 @@ export class BunVersionFilterMiddleware {
 
   /** Switches the request to execution phase for custom versioning */
   static setCustomVersioningExecutionPhase(req: BunRequest, bestVersion: string): void {
-    const reqMeta = req as CustomVersioningMeta
-    reqMeta._customVersioningPhase = 'execution'
-    reqMeta._customVersioningBestCandidate = bestVersion
+    req.set(CUSTOM_VERSIONING_PHASE_KEY, 1 as CustomVersioningPhase)
+    req.set(CUSTOM_VERSIONING_BEST_CANDIDATE_KEY, bestVersion)
   }
 
-  /** Checks if request has custom versioning candidates pending */
+  /** Checks if request has custom versioning candidates pending (combined check) */
   static hasCustomVersioningCandidates(req: BunRequest): boolean {
-    const { _customVersioningPhase: phase, _customVersioningCandidates: candidates } = req as CustomVersioningMeta
-    return phase === 'discovery' && !!candidates?.size
+    // Phase: 0 = discovery - only check phase first (fast path)
+    const phase = req.get<CustomVersioningPhase>(CUSTOM_VERSIONING_PHASE_KEY)
+    if (phase !== 0) return false
+    const candidates = req.get<CustomVersioningCandidates>(CUSTOM_VERSIONING_CANDIDATES_KEY)
+    return !!candidates?.size
   }
 }

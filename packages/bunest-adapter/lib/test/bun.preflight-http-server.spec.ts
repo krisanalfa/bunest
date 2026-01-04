@@ -6,6 +6,8 @@ import { Test } from '@nestjs/testing'
 import { BunWsAdapter, BunWsAdapterOptions } from '../bun.ws-adapter.js'
 import { BunAdapter } from '../bun.adapter.js'
 import { BunPreflightHttpServer } from '../bun.preflight-http-server.js'
+import { BunServerInstance } from '../bun.server-instance.js'
+import { WsOptions } from '../bun.internal.types.js'
 
 describe('Bun PreflightHttpServer', () => {
   it('should create an http server instance', async () => {
@@ -60,5 +62,60 @@ describe('Bun PreflightHttpServer', () => {
     // Closing the app should call BunPreflightHttpServer's close method without errors
     await app.close()
     expect(closeSpy).toHaveBeenCalled()
+  })
+
+  it('should call stop() on server instance', async () => {
+    const moduleRef = await Test.createTestingModule({
+      //
+    }).compile()
+    const adapter = new BunAdapter()
+    const app = moduleRef.createNestApplication(adapter)
+    await app.init()
+    const httpServerInstance = adapter.getHttpServer() as unknown as BunPreflightHttpServer
+    expect(httpServerInstance).toBeInstanceOf(BunPreflightHttpServer)
+    // Create spy for stop method
+    const serverInstance: BunServerInstance = adapter.getInstance()
+    const stopSpy = spyOn(serverInstance, 'stop')
+    // Call stop through preflight server
+    await httpServerInstance.stop()
+    expect(stopSpy).toHaveBeenCalled()
+    await app.close()
+  })
+
+  it('should call address() and return server address', async () => {
+    const moduleRef = await Test.createTestingModule({
+      //
+    }).compile()
+    const adapter = new BunAdapter({ hostname: 'localhost' })
+    const app = moduleRef.createNestApplication(adapter)
+    await app.init()
+    const httpServerInstance = adapter.getHttpServer() as unknown as BunPreflightHttpServer
+    expect(httpServerInstance).toBeInstanceOf(BunPreflightHttpServer)
+    // Address should return the expected structure
+    const addressInfo = httpServerInstance.address()
+    expect(addressInfo).toBeDefined()
+    expect(addressInfo.address).toBe('localhost')
+    await app.close()
+  })
+
+  it('should delegate WebSocket methods to server instance', async () => {
+    const moduleRef = await Test.createTestingModule({
+      //
+    }).compile()
+    const adapter = new BunAdapter()
+    const app = moduleRef.createNestApplication(adapter)
+    await app.init()
+    const httpServerInstance = adapter.getHttpServer() as unknown as BunPreflightHttpServer
+    expect(httpServerInstance).toBeInstanceOf(BunPreflightHttpServer)
+
+    // Test setWsOptions
+    const wsOptions: WsOptions = { cors: true }
+    httpServerInstance.setWsOptions(wsOptions)
+
+    // Test getBunServer
+    const bunServer = httpServerInstance.getBunServer()
+    expect(bunServer).toBeDefined()
+
+    await app.close()
   })
 })

@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 import { BunAdapter } from '../../bun.adapter.js'
+import { BunServerInstance } from '../../bun.server-instance.js'
 
 // ================================
 // Test Controllers
@@ -208,5 +209,22 @@ describe('BunAdapter HEAD Method', () => {
       const headText = await headResponse.text()
       expect(headText).toBe('')
     })
+  })
+})
+
+describe('BunAdapter Instance Methods', () => {
+  let adapter: BunAdapter
+
+  beforeAll(() => {
+    adapter = new BunAdapter({
+      development: false,
+      id: randomUUIDv7(),
+    })
+  })
+
+  it('should return the server instance via getServerInstance()', () => {
+    const serverInstance: BunServerInstance = adapter.getInstance()
+    expect(serverInstance).toBeDefined()
+    expect(serverInstance.constructor.name).toBe('BunServerInstance')
   })
 })

@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os'
 import { BunWsAdapter, BunWsAdapterOptions } from '../../bun.ws-adapter.js'
 import { BunAdapter } from '../../bun.adapter.js'
 import { BunPreflightHttpServer } from '../../bun.preflight-http-server.js'
+import { WsData } from '../../bun.internal.types.js'
 
 @WebSocketGateway<BunWsAdapterOptions>({ cors: true })
 class AppGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -297,7 +298,7 @@ describe('BunWsAdapter Basic', () => {
         @MessageBody() message: string,
         @ConnectedSocket() client: ServerWebSocket,
       ) {
-        const subscriberCount = this.server.getBunServer().subscriberCount(this.roomName)
+        const subscriberCount = this.server.getBunServer()?.subscriberCount(this.roomName)
         client.publishText(
           this.roomName,
           JSON.stringify({
@@ -495,7 +496,8 @@ describe('BunWsAdapter Basic', () => {
 
   describe('Client Data Factory', () => {
     @WebSocketGateway<BunWsAdapterOptions>({
-      clientDataFactory: (req) => {
+      clientDataFactory: async (req) => {
+        await sleep(1)
         return {
           user: req.headers.get('x-user-id') ?? 'anonymous',
         }
@@ -622,7 +624,7 @@ describe('BunWsAdapter Basic', () => {
 
   describe('Custom Message Parser', () => {
     @WebSocketGateway<BunWsAdapterOptions>({
-      messageParser: (data: string | Buffer | ArrayBuffer | Buffer[]) => {
+      messageParser: (data: WsData) => {
         let messageString: string
         if (typeof data === 'string') {
           messageString = data

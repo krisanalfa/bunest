@@ -9,14 +9,13 @@ import { NestApplication } from '@nestjs/core'
 import { ServerWebSocket } from 'bun'
 import { isNil } from '@nestjs/common/utils/shared.utils.js'
 
+import { BunWsClientData, WsData, WsOptions } from './bun.internal.types.js'
 import { BunPreflightHttpServer } from './bun.preflight-http-server.js'
-import { WsOptions } from './internal.types.js'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type WsData = string | Buffer | ArrayBuffer | Buffer[]
 export type WsMessageParser<TData = unknown> = (data: WsData) => WsParsedData<TData>
 
 export interface WsParsedData<TData = unknown> {
@@ -26,16 +25,6 @@ export interface WsParsedData<TData = unknown> {
 
 export interface BunWsAdapterOptions extends WsOptions {
   messageParser?: WsMessageParser
-}
-
-/** Internal data stored on each WebSocket connection - must match bun.adapter.ts */
-interface BunWsClientData {
-  /** Called when a message is received - matches bun.adapter.ts onMessageInternal */
-  onMessageInternal?: (message: WsData) => void
-  /** Called when the connection closes - matches bun.adapter.ts onCloseInternal */
-  onCloseInternal?: () => void
-  /** Called by NestJS for disconnect handling */
-  onDisconnect?: (ws: ServerWebSocket<unknown>) => void
 }
 
 type BunWsClient = ServerWebSocket<BunWsClientData> & BaseWsInstance

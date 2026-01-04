@@ -15,6 +15,7 @@ This project provides a native Bun adapter for NestJS, allowing developers to le
     - [Validation](#validation)
     - [File Uploads](#file-uploads)
     - [Streaming Responses](#streaming-responses)
+    - [Server-Sent Events (SSE)](#server-sent-events-sse)
     - [Versioning](#versioning)
     - [CORS](#cors)
     - [Cookies](#cookies)
@@ -374,6 +375,67 @@ class FilesController {
   }
 }
 ```
+
+#### Server-Sent Events (SSE)
+
+Full support for [Server-Sent Events](https://docs.nestjs.com/techniques/server-sent-events) using the `@Sse()` decorator. SSE allows servers to push real-time updates to clients over HTTP:
+
+```ts
+import { Controller, Sse, MessageEvent } from '@nestjs/common';
+import { Observable, interval, map } from 'rxjs';
+
+@Controller()
+class EventsController {
+  @Sse('/sse')
+  sendEvents(): Observable<MessageEvent> {
+    return interval(1000).pipe(
+      map(num => ({
+        data: `SSE message ${num.toString()}`,
+      })),
+    );
+  }
+}
+```
+
+**Client Connection Example:**
+
+```ts
+const eventSource = new EventSource('http://localhost:3000/sse');
+
+eventSource.onopen = () => {
+  console.log('SSE connection opened');
+};
+
+eventSource.onmessage = (event) => {
+  console.log('Received:', event.data); // "SSE message 0", "SSE message 1", etc.
+};
+
+eventSource.onerror = (error) => {
+  console.error('SSE error:', error);
+  eventSource.close();
+};
+
+// Close the connection when done
+// eventSource.close();
+```
+
+**For HTTPS/Secure Connections:**
+
+```ts
+import { EventSource } from 'eventsource'; // npm package for Node.js
+
+const eventSource = new EventSource('https://localhost:3000/sse', {
+  fetch: (url, init) => fetch(url, {
+    ...init,
+    tls: { rejectUnauthorized: false }, // For self-signed certificates
+  }),
+});
+
+eventSource.onmessage = (event) => {
+  console.log('Received:', event.data);
+};
+```
+
 
 #### Versioning
 
@@ -1251,6 +1313,23 @@ oha -c 125 -n 1000000 --no-tui "http://127.0.0.1:3000/"
 
 > **Pure Bun** is the fastest at **80,743 req/s**. **Nest + Bun + Native Bun Adapter** achieves **~86%** of Pure Bun's performance while providing full NestJS features, and is **~5x faster** than Nest + Node + Express. Compared to Bun with Express adapter, the native Bun adapter is **~1.6x faster**.
 
+Bonus if you use Unix sockets:
+```
+Summary:
+  Success rate:	100.00%
+  Total:	8298.2243 ms
+  Slowest:	5.2326 ms
+  Fastest:	0.2857 ms
+  Average:	1.0361 ms
+  Requests/sec:	120507.7092
+
+  Total data:	21.93 MiB
+  Size/request:	23 B
+  Size/sec:	2.64 MiB
+```
+
+As you can see, using Unix sockets boosts the performance further to **120,508 req/s**, which is **~1.5x faster** than TCP. Since Bun `fetch` supports Unix sockets, you can leverage this for inter-process communication on the same machine.
+
 ### WebSocket Benchmark
 
 WebSocket benchmarks run using the custom benchmark script in `benchmarks/ws.benchmark.ts`.
@@ -1321,7 +1400,7 @@ Contributions are welcome! Please open issues or submit pull requests for bug fi
 ## Future Plans
 
 - Enhanced trusted proxy configuration for host header handling
-- Additional performance optimizations and benchmarks
+- Improved documentation and examples
 - Release automation via CI/CD pipelines
 
 ## License

@@ -53,9 +53,12 @@ export class BunRequest {
    *
    * @returns A mock socket object with encrypted property
    */
-  get socket(): { encrypted: boolean } {
+  get socket() {
     return {
       encrypted: this._parsedUrl.protocol === 'https:',
+      setKeepAlive: () => { /* no-op */ },
+      setNoDelay: () => { /* no-op */ },
+      setTimeout: () => { /* no-op */ },
     }
   }
 
@@ -289,7 +292,10 @@ export class BunRequest {
    * console.log(user); // { id: 1, name: 'John' }
    * ```
    */
-  get(key: string): unknown { return this._settings?.get(key) }
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
+  get<T>(key: string): T | undefined {
+    return this._settings?.get(key) as T | undefined
+  }
 
   /**
    * Sets a custom setting/property in the request.
@@ -435,5 +441,62 @@ export class BunRequest {
     cloned._query = this._query
     cloned._settings = this._settings
     return cloned
+  }
+
+  /**
+   * Stub method for Node.js EventEmitter compatibility.
+   * This is a no-op method provided for compatibility with Node.js HTTP request objects.
+   * Required for SSE and other streaming scenarios where NestJS listens for request events.
+   *
+   * @param event - The event name
+   * @param listener - The event listener function
+   * @returns This request object for chaining
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  on(event: string, listener: (...args: unknown[]) => void): this {
+    // No-op for compatibility
+    return this
+  }
+
+  /**
+   * Stub method for Node.js EventEmitter compatibility.
+   * This is a no-op method provided for compatibility with Node.js HTTP request objects.
+   *
+   * @param event - The event name
+   * @param listener - The event listener function
+   * @returns This request object for chaining
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  once(event: string, listener: (...args: unknown[]) => void): this {
+    // No-op for compatibility
+    return this
+  }
+
+  /**
+   * Stub method for Node.js EventEmitter compatibility.
+   * This is a no-op method provided for compatibility with Node.js HTTP request objects.
+   *
+   * @param event - The event name
+   * @param listener - The event listener function
+   * @returns This request object for chaining
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  off(event: string, listener: (...args: unknown[]) => void): this {
+    // No-op for compatibility
+    return this
+  }
+
+  /**
+   * Stub method for Node.js EventEmitter compatibility.
+   * This is a no-op method provided for compatibility with Node.js HTTP request objects.
+   *
+   * @param event - The event name
+   * @param args - Event arguments
+   * @returns True to indicate the event was handled
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  emit(event: string, ...args: unknown[]): boolean {
+    // No-op for compatibility - return true to indicate event was handled
+    return true
   }
 }

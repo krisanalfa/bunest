@@ -1,0 +1,15 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": [
+    "lib/index.ts",
+    "lib/bun.adapter.ts",
+    "lib/bun.file.interceptor.ts",
+    "lib/bun.ws-adapter.ts"
+  ],
+  "ignoreFiles": [
+    "eslint.config.ts",
+    "lib/test/http/versioning/versioning.controllers.ts"
+  ],
+  "ignoreDependencies": ["@types/helmet", "class-transformer", "better-auth"],
+  "ignoreBinaries": ["eslint"]
+}

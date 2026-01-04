@@ -1,5 +1,5 @@
 import { ErrorHandler, RequestHandler } from '@nestjs/common/interfaces/index.js'
-import { ErrorLike } from 'bun'
+import { ErrorLike, peek } from 'bun'
 
 import { BunRequest } from './bun.request.js'
 import { BunResponse } from './bun.response.js'
@@ -122,6 +122,21 @@ export class BunMiddlewareEngine {
     return path === keyPath || (pathLen > keyPathLen && path.charCodeAt(keyPathLen) === 47 && path.startsWith(keyPath))
   }
 
+  private async executeHandler(
+    handler: MiddlewareHandler | undefined,
+    req: BunRequest,
+    res: BunResponse,
+    next: () => Promise<void>,
+  ): Promise<void> {
+    if (!handler) return
+    const result = handler(req, res, next) as unknown
+    if (result instanceof Promise) {
+      const peeked = peek<unknown>(result)
+      if (peeked !== result) return
+      await result
+    }
+  }
+
   async run(options: MiddlewareRunOptions): Promise<BunResponse> {
     try {
       const middlewares = this.getMiddlewareChain(options.method, options.path)
@@ -227,27 +242,22 @@ export class BunMiddlewareEngine {
 
       // Process middleware chain
       if (index < chainLength) {
-        const handler = chain[index++]
-        const result = handler(req, res, next) as unknown
-        if (result instanceof Promise) await result
+        await this.executeHandler(chain[index++], req, res, next)
         return
       }
 
-      // Process request handler at the end only if response hasn't been ended
+      // Process request handler
       if (index === chainLength) {
         index++
-        // Skip handler if response already ended by middleware
         if (!res.isEnded()) {
-          const result = requestHandler(req, res, next) as unknown
-          if (result instanceof Promise) await result
+          await this.executeHandler(requestHandler, req, res, next)
         }
         return
       }
 
-      // If next is called after the handler, call not found handler
-      if (index > chainLength && !res.isEnded()) {
-        const result = this.notFoundHandler?.(req, res, noop) as unknown
-        if (result instanceof Promise) await result
+      // Handle not found
+      if (!res.isEnded()) {
+        await this.executeHandler(this.notFoundHandler ?? undefined, req, res, () => Promise.resolve())
       }
     }
 
@@ -261,7 +271,10 @@ export class BunMiddlewareEngine {
   ): Promise<BunResponse> {
     if (this.errorHandler !== null) {
       const result = this.errorHandler(error, req, res, noop) as unknown
-      if (result instanceof Promise) await result
+      if (result instanceof Promise) {
+        const peeked = peek<unknown>(result)
+        if (peeked === result) await result
+      }
       return res
     }
     throw error

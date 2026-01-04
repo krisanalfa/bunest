@@ -40,6 +40,11 @@ class DummyController {
     return { message: 'Hello, World!' }
   }
 
+  @Get('/array')
+  getArray() {
+    return ['item1', 'item2', 'item3']
+  }
+
   @Post('/')
   postRoot(@Body() body: unknown) {
     return { message: 'Posted!', data: body }
@@ -243,6 +248,13 @@ describe('BunAdapter Controller', () => {
       const data = (await response.json()) as { message: string }
       expect(response.status).toBe(200)
       expect(data.message).toBe('Hello, World!')
+    })
+
+    it('should return array for GET /array', async () => {
+      const response = await fetch(`http://localhost/array`, { unix: socket })
+      const data = (await response.json()) as string[]
+      expect(response.status).toBe(200)
+      expect(data).toEqual(['item1', 'item2', 'item3'])
     })
 
     it('should return query parameters for GET /query', async () => {

@@ -1,22 +1,8 @@
 import { Server, ServerWebSocket } from 'bun'
 import { BaseWsInstance } from '@nestjs/websockets'
 
-import { ServerOptions, WsOptions } from './internal.types.js'
-
-interface BunHttpAdapter {
-  setWsOptions(options: WsOptions): void
-  getBunHttpServerInstance(): Server<unknown>
-  getWsHandlers(): {
-    onOpen: ((ws: ServerWebSocket<unknown>) => void) | undefined
-    onMessage: ((ws: ServerWebSocket<unknown>, message: string | ArrayBuffer | Buffer | Buffer[], server: Server<unknown>) => void) | undefined
-    onClose: ((ws: ServerWebSocket<unknown>, code: number, reason: string) => void) | undefined
-  }
-  getBunServerOptions(): Pick<
-    ServerOptions,
-    | 'port'
-    | 'hostname'
-  >
-}
+import { WsData, WsOptions } from './bun.internal.types.js'
+import { BunServerInstance } from './bun.server-instance.js'
 
 /**
  * Bun HTTP server placeholder used before the actual server instance is created.
@@ -27,7 +13,7 @@ interface BunHttpAdapter {
  * the server creation until NestJS calls the listen method.
  */
 export class BunPreflightHttpServer implements BaseWsInstance {
-  constructor(private readonly adapter: BunHttpAdapter) {}
+  constructor(private readonly serverInstance: BunServerInstance) {}
 
   // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type, @typescript-eslint/no-unused-vars
   on(event: string, callback: Function): void {
@@ -54,58 +40,37 @@ export class BunPreflightHttpServer implements BaseWsInstance {
    * NestJS compatibility methods
    */
   async stop(force?: boolean): Promise<void> {
-    const server = this.adapter.getBunHttpServerInstance()
-    if (server instanceof BunPreflightHttpServer) {
-      // If the server is still a dummy, there's nothing to stop
-      return
-    }
-    await server.stop(force)
+    await this.serverInstance.stop(force)
   }
 
   address() {
-    const server = this.adapter.getBunHttpServerInstance()
-    if (server instanceof BunPreflightHttpServer) {
-      const options = this.adapter.getBunServerOptions()
-      return {
-        address: options.hostname ?? '127.0.0.1',
-        port: options.port ?? 3000,
-      }
-    }
-
-    return {
-      address: server.hostname,
-      port: server.port,
-    }
+    return this.serverInstance.address()
   }
 
   setWsOptions(options: WsOptions) {
-    this.adapter.setWsOptions(options)
+    this.serverInstance.setWsOptions(options)
   }
 
   registerWsOpenHandler(handler: (ws: ServerWebSocket<unknown>) => void) {
-    this.adapter.getWsHandlers().onOpen = handler
+    this.serverInstance.registerWsOpenHandler(handler)
   }
 
-  registerWsMessageHandler(handler: (ws: ServerWebSocket<unknown>, message: string | ArrayBuffer | Buffer | Buffer[], server: Server<unknown>) => void) {
-    this.adapter.getWsHandlers().onMessage = handler
+  registerWsMessageHandler(handler: (ws: ServerWebSocket<unknown>, message: WsData, server: Server<unknown>) => void) {
+    this.serverInstance.registerWsMessageHandler(handler)
   }
 
   registerWsCloseHandler(handler: (ws: ServerWebSocket<unknown>, code: number, reason: string) => void) {
-    this.adapter.getWsHandlers().onClose = handler
+    this.serverInstance.registerWsCloseHandler(handler)
   }
 
-  getWsHandlers() {
-    return this.adapter.getWsHandlers()
-  }
-
-  getBunServer(): Server<unknown> {
-    return this.adapter.getBunHttpServerInstance()
+  getBunServer(): Server<unknown> | null {
+    return this.serverInstance.getBunServer()
   }
 
   /**
    * Proxy method for WebSocket server close
    */
   async close(): Promise<void> {
-    await this.stop(true)
+    await this.serverInstance.close()
   }
 }

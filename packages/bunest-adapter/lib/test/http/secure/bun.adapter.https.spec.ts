@@ -1,6 +1,9 @@
-import { Controller, Get, INestApplication, Req } from '@nestjs/common'
-import { Server, randomUUIDv7 } from 'bun'
+/* eslint-disable sonarjs/no-nested-functions */
+import { Controller, Get, INestApplication, MessageEvent, Req, Sse } from '@nestjs/common'
+import { Observable, interval, map } from 'rxjs'
+import { Server, randomUUIDv7, sleep } from 'bun'
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import { EventSource } from 'eventsource'
 import { Test } from '@nestjs/testing'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -18,6 +21,15 @@ class DummyController {
   @Get('ping')
   ping(@Req() request: BunRequest) {
     return { message: 'pong', secure: request.socket.encrypted }
+  }
+
+  @Sse('/sse')
+  getSse(): Observable<MessageEvent> {
+    return interval(1000).pipe(
+      map(num => ({
+        data: `SSE message ${num.toString()}`,
+      })),
+    )
   }
 }
 
@@ -52,6 +64,63 @@ describe('Bun HTTPS Adapter', () => {
       expect(response.status).toBe(200)
       const data = await response.json() as { message: string }
       expect(data).toEqual({ message: 'Hello, Secure World!' })
+    })
+
+    it('should handle SSE requests', async () => {
+      const eventSource = new EventSource(`${url}/sse`, {
+        fetch: (url, init) => fetch(url, {
+          ...init,
+          tls: { rejectUnauthorized: false },
+        }),
+      })
+
+      try {
+        // Collect messages for 3 seconds
+        const receivedMessages = await new Promise<string[]>((resolve, reject) => {
+          const messages: string[] = []
+          let resolved = false
+          const timeout = setTimeout(() => {
+            resolved = true
+            // Remove error handler before resolving to prevent unhandled errors
+            eventSource.onerror = null
+            resolve(messages)
+          }, 3000)
+
+          eventSource.onopen = () => {
+            // Connection opened successfully
+          }
+
+          eventSource.onmessage = (event) => {
+            // Collect received messages
+            messages.push(event.data as string)
+          }
+
+          eventSource.onerror = (err) => {
+            // Only reject if we haven't resolved yet (connection never opened)
+            if (!resolved) {
+              clearTimeout(timeout)
+              // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
+              reject(err)
+            }
+          }
+        })
+
+        // Verify we received multiple messages
+        expect(receivedMessages.length).toBeGreaterThanOrEqual(2)
+        // Verify each message matches the controller's format
+        receivedMessages.forEach((message) => {
+          expect(message).toMatch(/^SSE message \d+$/)
+        })
+      }
+      finally {
+        // Clean up event listeners before closing
+        eventSource.onopen = null
+        eventSource.onmessage = null
+        eventSource.onerror = null
+        eventSource.close()
+        // Wait a bit for cleanup
+        await sleep(200)
+      }
     })
 
     afterAll(async () => {
