@@ -20,6 +20,7 @@ This project provides a native Bun adapter for NestJS, allowing developers to le
     - [CORS](#cors)
     - [Cookies](#cookies)
     - [Popular Express Middleware](#popular-express-middleware)
+    - [Static Assets](#static-assets)
   - [Bun File API Support](#bun-file-api-support)
     - [BunFileInterceptor](#bunfileinterceptor)
   - [WebSocket Support](#websocket-support)
@@ -51,7 +52,7 @@ This project provides a native Bun adapter for NestJS, allowing developers to le
 Easy to set up and use Bun as the underlying HTTP server for your NestJS applications.
 
 ```ts
-import { BunAdapter } from "@krisanalfa/bunest-adapter";
+import { BunAdapter, NestBunApplication } from "@krisanalfa/bunest-adapter";
 import { Logger } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { Server } from "bun";
@@ -59,10 +60,10 @@ import { Server } from "bun";
 import { AppModule } from "./app.module.js";
 
 async function main() {
-  const app = await NestFactory.create(AppModule, new BunAdapter());
+  const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter());
   await app.listen(3000);
-  const server = app.getHttpAdapter().getHttpServer() as Server<unknown>;
-  Logger.log(`Server started on ${server.url.toString()}`, "NestApplication");
+  const server = app.getHttpServer().getBunServer()
+  Logger.log(`Server started on ${server?.url.toString() ?? 'http://localhost:3000'}`, 'NestApplication')
 }
 
 await main();
@@ -495,7 +496,7 @@ app.enableCors((req: BunRequest, callback) => {
 You can also use NestJS's `CorsOptions` type for static configuration.
 
 ```ts
-const app = await NestFactory.create(AppModule, new BunAdapter(), {
+const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter(), {
   cors: {
     origin: "https://example.com",
     methods: ["GET", "POST", "PUT"],
@@ -535,7 +536,7 @@ Compatible with popular Express middleware:
 ```ts
 import helmet from "helmet";
 
-const app = await NestFactory.create(AppModule, new BunAdapter());
+const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter());
 app.use(helmet());
 ```
 
@@ -543,7 +544,65 @@ Tested and working with:
 
 - `helmet` - Security headers
 - `cors` - CORS handling
-- And most other Express-compatible middleware
+- `@thallesp/nestjs-better-auth` - `better-auth` middleware
+- `express-session` - Session management
+
+#### Static Assets
+
+Serve static files from your NestJS application using Bun's native file serving capabilities. The adapter supports two distinct modes:
+
+**File Routes (Default)** - Reads files from the filesystem on each request, supports range requests, respects middlewares, and provides full HTTP feature compatibility:
+
+```ts
+import { join } from 'path';
+
+const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter());
+
+// Serve static assets using file routes (default)
+app.useStaticAssets(join(__dirname, 'public'));
+
+// Or explicitly set useStatic to false
+app.useStaticAssets(join(__dirname, 'public'), { useStatic: false });
+
+await app.listen(3000);
+
+// Files in 'public' directory are now accessible:
+// public/index.html -> http://localhost:3000/index.html
+// public/css/style.css -> http://localhost:3000/css/style.css
+// public/images/logo.png -> http://localhost:3000/images/logo.png
+```
+
+> Note: Even if the file routes read the files from the filesystem on each request, you still need to make sure that Bun has access to the files right before you call `app.listen()`. The adapter reads the directory structure and prepares the routes at that time. If you need different behavior (e.g., dynamic files), consider using a custom controller to serve those files.
+
+**Static Routes** - Serves files directly from memory for maximum performance, but with some limitations (no range requests, doesn't respect middlewares):
+
+```ts
+import { join } from 'path';
+
+const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter());
+
+// Serve static assets using static routes (faster, but with limitations)
+app.useStaticAssets(join(__dirname, 'public'), { useStatic: true });
+
+await app.listen(3000);
+```
+
+**With CORS Support:**
+
+```ts
+const app = await NestFactory.create<NestBunApplication>(
+  AppModule,
+  new BunAdapter(),
+  { cors: true }
+);
+
+// Static assets will respect CORS settings when using file routes
+app.useStaticAssets(join(__dirname, 'public'), { useStatic: false });
+```
+
+**Choosing Between Modes:**
+
+For more details, see [Bun's documentation on file responses vs static responses](https://bun.sh/docs/runtime/http/routing#file-responses-vs-static-responses).
 
 ### WebSocket Support
 
@@ -585,7 +644,7 @@ class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 }
 
 // Enable WebSocket support in your application
-const app = await NestFactory.create(AppModule, new BunAdapter());
+const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter());
 app.useWebSocketAdapter(new BunWsAdapter(app));
 await app.listen(3000);
 ```
@@ -777,10 +836,10 @@ The Bun adapter supports secure WebSocket connections (WSS) using TLS/SSL certif
 **Using BunAdapter constructor options:**
 
 ```ts
-import { BunAdapter, BunWsAdapter } from "@krisanalfa/bunest-adapter";
+import { BunAdapter, BunWsAdapter, NestBunApplication } from "@krisanalfa/bunest-adapter";
 import { NestFactory } from "@nestjs/core";
 
-const app = await NestFactory.create(
+const app = await NestFactory.create<NestBunApplication>(
   AppModule,
   new BunAdapter({
     tls: {
@@ -800,10 +859,10 @@ await app.listen(3000);
 **Using NestFactory.create httpsOptions:**
 
 ```ts
-import { BunAdapter, BunWsAdapter } from "@krisanalfa/bunest-adapter";
+import { BunAdapter, BunWsAdapter, NestBunApplication } from "@krisanalfa/bunest-adapter";
 import { NestFactory } from "@nestjs/core";
 
-const app = await NestFactory.create(AppModule, new BunAdapter(), {
+const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter(), {
   httpsOptions: {
     cert: Bun.file("/path/to/cert.pem"),
     key: Bun.file("/path/to/key.pem"),
@@ -819,10 +878,10 @@ await app.listen(3000);
 You can also run secure WebSocket servers over Unix sockets:
 
 ```ts
-import { BunAdapter, BunWsAdapter } from "@krisanalfa/bunest-adapter";
+import { BunAdapter, BunWsAdapter, NestBunApplication } from "@krisanalfa/bunest-adapter";
 import { NestFactory } from "@nestjs/core";
 
-const app = await NestFactory.create(
+const app = await NestFactory.create<NestBunApplication>(
   AppModule,
   new BunAdapter({
     tls: {
@@ -877,7 +936,7 @@ class ChatGateway {
 }
 
 // WebSocket will be available on the same port as HTTP
-const app = await NestFactory.create(AppModule, new BunAdapter());
+const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter());
 app.useWebSocketAdapter(new BunWsAdapter(app));
 await app.listen(3000); // Both HTTP and WebSocket use port 3000
 ```
@@ -943,7 +1002,7 @@ You can run your NestJS application with HTTPS using two approaches:
 #### Using Bun's built-in HTTPS support (recommended)
 
 ```ts
-const app = await NestFactory.create(
+const app = await NestFactory.create<NestBunApplication>(
   AppModule,
   new BunAdapter({
     tls: {
@@ -957,7 +1016,7 @@ const app = await NestFactory.create(
 #### Using NestJS App Factory HTTPS options
 
 ```ts
-const app = await NestFactory.create(
+const app = await NestFactory.create<NestBunApplication>(
   AppModule,
   new BunAdapter(/* leave it empty */),
   {

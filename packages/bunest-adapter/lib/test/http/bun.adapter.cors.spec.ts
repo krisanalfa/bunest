@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 
 import { BunAdapter } from '../../bun.adapter.js'
 import { BunRequest } from '../../bun.request.js'
+import { NestBunApplication } from '../../bun.internal.types.js'
 
 // ================================
 // Test Controllers
@@ -330,22 +331,22 @@ describe('BunAdapter CORS Middleware Extended', () => {
 
   describe('CORS delegate with error handling', () => {
     const socket = join(tmpdir(), `${randomUUIDv7()}.sock`)
-    let app: INestApplication<Server<unknown>>
+    let app: NestBunApplication
 
     beforeAll(async () => {
       const moduleRef = await Test.createTestingModule({
         controllers: [CorsTestController],
       }).compile()
 
-      app = moduleRef.createNestApplication(new BunAdapter(), { logger: false })
+      app = moduleRef.createNestApplication<NestBunApplication>(new BunAdapter(), { logger: false })
 
       // Use delegate function that can throw errors
-      app.enableCors((req: BunRequest, callback: (err: Error | null, options?: CorsOptions) => void) => {
+      app.enableCors((req: BunRequest, callback: (err: Error | null, options: CorsOptions) => void) => {
         const origin = req.headers.get('origin')
 
         // Simulate error condition
         if (origin === 'https://error.example.com') {
-          callback(new Error('CORS configuration error'), undefined)
+          callback(new Error('CORS configuration error'), undefined as unknown as CorsOptions)
           return
         }
 

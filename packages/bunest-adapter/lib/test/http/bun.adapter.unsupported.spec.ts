@@ -95,18 +95,6 @@ describe('BunAdapter Unsupported Methods', () => {
   })
 
   describe('Static Assets and Templating', () => {
-    it('should throw error for useStaticAssets()', () => {
-      expect(() => {
-        adapter.useStaticAssets()
-      }).toThrow('Not supported.')
-      expect(() => {
-        adapter.useStaticAssets('/public')
-      }).toThrow('Not supported.')
-      expect(() => {
-        adapter.useStaticAssets('/public', { prefix: '/static' })
-      }).toThrow('Not supported.')
-    })
-
     it('should throw error for setViewEngine()', () => {
       expect(() => {
         adapter.setViewEngine('ejs')

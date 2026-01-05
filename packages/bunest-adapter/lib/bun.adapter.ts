@@ -16,7 +16,7 @@ import { Server, randomUUIDv7 } from 'bun'
 import { AbstractHttpAdapter } from '@nestjs/core'
 import { VersionValue } from '@nestjs/common/interfaces/version-options.interface.js'
 
-import { BunWsClientData, ServerOptions } from './bun.internal.types.js'
+import { BunStaticAssetsOptions, BunWsClientData, ServerOptions } from './bun.internal.types.js'
 import { BunPreflightHttpServer } from './bun.preflight-http-server.js'
 import { BunRequest } from './bun.request.js'
 import { BunResponse } from './bun.response.js'
@@ -38,9 +38,8 @@ export class BunAdapter extends AbstractHttpAdapter<
     super(new BunServerInstance(bunServeOptions))
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  useStaticAssets(...args: unknown[]) {
-    throw new Error('Not supported.')
+  useStaticAssets(path: string, options?: BunStaticAssetsOptions) {
+    this.instance.useStaticAssets(path, options)
   }
 
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -194,9 +193,9 @@ export class BunAdapter extends AbstractHttpAdapter<
     maybeCallback?: () => void,
   ): void {
     // Delegate to server instance, then update httpServer reference
-    this.setHttpServer(
-      this.instance.listen(port, hostnameOrCallback as string, maybeCallback),
-    )
+    void this.instance.listen(port, hostnameOrCallback as string, maybeCallback).then((server) => {
+      this.setHttpServer(server)
+    })
   }
 
   private configureTls(options: NestApplicationOptions) {

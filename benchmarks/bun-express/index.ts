@@ -1,10 +1,11 @@
 import { Logger } from '@nestjs/common'
+import { NestExpressApplication } from '@nestjs/platform-express'
 import { NestFactory } from '@nestjs/core'
 
 import { AppModule } from 'benchmarks/app/app.module.js'
 
 async function main() {
-  const app = await NestFactory.create(AppModule)
+  const app = await NestFactory.create<NestExpressApplication>(AppModule)
   await app.listen(3000)
   Logger.log(`Server started on http://localhost:3000`, 'NestApplication')
 }

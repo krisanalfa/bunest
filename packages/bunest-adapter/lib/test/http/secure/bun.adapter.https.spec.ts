@@ -1,11 +1,12 @@
 /* eslint-disable sonarjs/no-nested-functions */
-import { Controller, Get, INestApplication, MessageEvent, Req, Sse } from '@nestjs/common'
+import { Controller, Get, INestApplication, MessageEvent, Req, Session, Sse } from '@nestjs/common'
 import { Observable, interval, map } from 'rxjs'
-import { Server, randomUUIDv7, sleep } from 'bun'
+import { Server, randomUUIDv7 } from 'bun'
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { EventSource } from 'eventsource'
 import { Test } from '@nestjs/testing'
 import { join } from 'node:path'
+import session from 'express-session'
 import { tmpdir } from 'node:os'
 
 import { BunAdapter } from '../../../bun.adapter.js'
@@ -31,6 +32,14 @@ class DummyController {
       })),
     )
   }
+
+  @Get('session')
+  getSession(@Session() session: { visits?: number }) {
+    session.visits = (session.visits ?? 0) + 1
+    return {
+      visits: session.visits,
+    }
+  }
 }
 
 describe('Bun HTTPS Adapter', () => {
@@ -47,6 +56,12 @@ describe('Bun HTTPS Adapter', () => {
           cert: Bun.file(join(__dirname, 'localhost.crt')),
           key: Bun.file(join(__dirname, 'localhost.key')),
         },
+      }))
+      app.use(session({
+        secret: randomUUIDv7(),
+        resave: false,
+        saveUninitialized: false,
+        cookie: { secure: true },
       }))
       await app.listen(0)
       const server = app.getHttpAdapter().getHttpServer() as Server<unknown>
@@ -74,53 +89,61 @@ describe('Bun HTTPS Adapter', () => {
         }),
       })
 
-      try {
-        // Collect messages for 3 seconds
-        const receivedMessages = await new Promise<string[]>((resolve, reject) => {
-          const messages: string[] = []
-          let resolved = false
-          const timeout = setTimeout(() => {
-            resolved = true
-            // Remove error handler before resolving to prevent unhandled errors
-            eventSource.onerror = null
-            resolve(messages)
-          }, 3000)
+      // Wait for connection to open
+      await new Promise<void>((resolve) => {
+        eventSource.onopen = () => {
+          resolve()
+        }
+      })
+      expect(eventSource.readyState).toBe(EventSource.OPEN)
 
-          eventSource.onopen = () => {
-            // Connection opened successfully
-          }
+      // Collect messages for 3 seconds
+      const receivedMessages = await new Promise<string[]>((resolve) => {
+        const messages: string[] = []
+        setTimeout(() => {
+          resolve(messages)
+        }, 3000)
 
-          eventSource.onmessage = (event) => {
-            // Collect received messages
-            messages.push(event.data as string)
-          }
+        eventSource.onmessage = (event) => {
+          // Collect received messages
+          messages.push(event.data as string)
+        }
+      })
 
-          eventSource.onerror = (err) => {
-            // Only reject if we haven't resolved yet (connection never opened)
-            if (!resolved) {
-              clearTimeout(timeout)
-              // eslint-disable-next-line @typescript-eslint/prefer-promise-reject-errors
-              reject(err)
-            }
-          }
-        })
-
-        // Verify we received multiple messages
-        expect(receivedMessages.length).toBeGreaterThanOrEqual(2)
-        // Verify each message matches the controller's format
-        receivedMessages.forEach((message) => {
-          expect(message).toMatch(/^SSE message \d+$/)
-        })
+      // Verify we received multiple messages
+      expect(receivedMessages.length).toBeGreaterThanOrEqual(2)
+      // Verify each message matches the controller's format
+      receivedMessages.forEach((message) => {
+        expect(message).toMatch(/^SSE message \d+$/)
+      })
+      // Respect order of messages
+      for (const [index, message] of receivedMessages.entries()) {
+        expect(message).toBe(`SSE message ${index.toString()}`)
       }
-      finally {
-        // Clean up event listeners before closing
-        eventSource.onopen = null
-        eventSource.onmessage = null
-        eventSource.onerror = null
-        eventSource.close()
-        // Wait a bit for cleanup
-        await sleep(200)
-      }
+
+      eventSource.close()
+    })
+
+    it('should be able to access secure session', async () => {
+      const res = await fetch(`${url}/session`, {
+        tls: { rejectUnauthorized: false },
+      })
+      expect(res.status).toBe(200)
+      const body1 = await res.json() as { visits: number }
+      expect(body1.visits).toBe(1)
+      const cookie = res.headers.get('set-cookie')
+      expect(cookie).toBeDefined()
+      expect(cookie).not.toBeNull()
+
+      const res2 = await fetch(`${url}/session`, {
+        tls: { rejectUnauthorized: false },
+        headers: {
+          cookie: cookie as unknown as string,
+        },
+      })
+      expect(res2.status).toBe(200)
+      const body2 = await res2.json() as { visits: number }
+      expect(body2.visits).toBe(2)
     })
 
     afterAll(async () => {

@@ -709,6 +709,19 @@ export class BunResponse {
     return this.ended
   }
 
+  /**
+   * Stub method for Node.js HTTP response compatibility.
+   *
+   * The primary purpose of _implicitHeader() is to automatically generate and send the HTTP headers if a write operation (like `response.write()` or `response.end()`)
+   * is called without explicitly calling `response.writeHead()` first.
+   */
+  _implicitHeader(): void {
+    // Always call writeHead to ensure headers are set:
+    // express-session use on-headers library to write headers implicitly,
+    // under the hood, express-session rely on `_implicitHeader` to call `writeHead` without "ended" the response.
+    this.writeHead(this.statusCode, {})
+  }
+
   private buildStreamableResponse(body: StreamableFile): Response {
     const streamHeaders = body.getHeaders()
     const headers = this.headersMap

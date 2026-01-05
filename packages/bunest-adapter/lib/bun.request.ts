@@ -10,6 +10,17 @@ type HeadersProxy = Record<string, string> & {
 // Pre-allocated empty object for Object.create(null) pattern
 const NULL_PROTO = Object.getPrototypeOf(Object.create(null)) as object
 
+interface Connection {
+  encrypted: boolean
+}
+
+interface TcpSocket {
+  encrypted: boolean
+  setKeepAlive: (enable?: boolean, initialDelay?: number) => void
+  setNoDelay: (noDelay?: boolean) => void
+  setTimeout: (timeout: number, callback?: () => void) => void
+}
+
 /**
  * A high-performance request wrapper for Bun's native request object.
  * Provides lazy parsing and caching for optimal performance in NestJS applications.
@@ -32,30 +43,39 @@ export class BunRequest {
   private _file: File | null = null
   private _files: File[] | null = null
   private _settings: Map<string, unknown> | null = null
+  private _connection: Connection | null = null
+  private _socket: TcpSocket | null = null
 
   // Cache URL parts at construction time for hot-path access
-  private readonly _url: string
+  private _url: string | null = null
   private readonly _parsedUrl: URL
   readonly method: string
   readonly params: Record<string, string>
 
   constructor(private readonly nativeRequest: NativeRequest) {
-    this._url = nativeRequest.url
-    this._parsedUrl = new URL(this._url)
+    this._parsedUrl = new URL(nativeRequest.url)
     this._nativeHeaders = nativeRequest.headers
     this.method = nativeRequest.method
     this.params = nativeRequest.params
   }
 
   /**
+   * Gets a mock connection object for compatibility with Node.js middleware.
+   * Some middleware (like express-session) check req.connection.encrypted to determine if the connection is HTTPS.
+   */
+  get connection() {
+    return this._connection ??= {
+      encrypted: this._parsedUrl.protocol === 'https:' || this.nativeRequest.url.startsWith('https://'),
+    }
+  }
+
+  /**
    * Gets a mock socket object for compatibility with Node.js middleware.
    * Some middleware (like Better Auth) check req.socket.encrypted to determine if the connection is HTTPS.
-   *
-   * @returns A mock socket object with encrypted property
    */
   get socket() {
-    return {
-      encrypted: this._parsedUrl.protocol === 'https:',
+    return this._socket ??= {
+      encrypted: this._parsedUrl.protocol === 'https:' || this.nativeRequest.url.startsWith('https://'),
       setKeepAlive: () => { /* no-op */ },
       setNoDelay: () => { /* no-op */ },
       setTimeout: () => { /* no-op */ },
@@ -75,7 +95,7 @@ export class BunRequest {
    * ```
    */
   get url(): string {
-    return this._parsedUrl.pathname + this._parsedUrl.search
+    return this._url ??= this._parsedUrl.pathname + this._parsedUrl.search
   }
 
   /**
@@ -432,14 +452,20 @@ export class BunRequest {
    */
   clone(): BunRequest {
     const cloned = new BunRequest(this.nativeRequest.clone())
+    // _nativeHeaders and _parsedUrl are set in constructor
+    cloned._hostname = this._hostname
     cloned._pathname = this._pathname
+    cloned._query = this._query
     cloned._body = this._body
     cloned._rawBody = this._rawBody
     cloned._file = this._file
     cloned._files = this._files
     cloned._headers = this._headers
-    cloned._query = this._query
     cloned._settings = this._settings
+    cloned._connection = this._connection
+    cloned._socket = this._socket
+    cloned._url = this._url
+    // Other public properties are set in constructor
     return cloned
   }
 

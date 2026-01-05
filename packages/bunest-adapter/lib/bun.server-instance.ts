@@ -5,8 +5,10 @@ import {
 import { Logger, RequestMethod } from '@nestjs/common'
 import { BunRequest as NativeRequest, Serve, Server, ServerWebSocket } from 'bun'
 import { RequestHandler } from '@nestjs/common/interfaces/index.js'
+import { join } from 'node:path'
+import { readdir } from 'node:fs/promises'
 
-import { BunWsClientData, ServerOptions, WsData, WsHandlers, WsOptions } from './bun.internal.types.js'
+import { BunStaticAssetsOptions, BunWsClientData, ServerOptions, WsData, WsHandlers, WsOptions } from './bun.internal.types.js'
 import { BunBodyParserMiddleware } from './bun.body-parser.middleware.js'
 import { BunCorsMiddleware } from './bun.cors.middleware.js'
 import { BunMiddlewareEngine } from './bun.middleware-engine.js'
@@ -80,6 +82,12 @@ export class BunServerInstance {
   private wsOptions: WsOptions = {}
   private useWs = false
   private useWsCors = false
+
+  // Static assets serving
+  private staticAssetsOptions: {
+    path: string
+    options?: BunStaticAssetsOptions
+  } | null = null
 
   // Server instance
   private httpServer: Server<unknown> | null = null
@@ -262,11 +270,11 @@ export class BunServerInstance {
    * @param hostnameOrCallback The hostname to bind to or the callback function.
    * @param maybeCallback Optional callback to invoke once the server is listening.
    */
-  listen(
+  async listen(
     port: string | number,
     hostnameOrCallback?: string | (() => void),
     maybeCallback?: () => void,
-  ): Server<unknown> {
+  ): Promise<Server<unknown>> {
     const hostname
       = typeof hostnameOrCallback === 'string' ? hostnameOrCallback : (this.bunServeOptions.hostname ?? '127.0.0.1')
     const callback
@@ -279,6 +287,9 @@ export class BunServerInstance {
     const notFoundHandler = this.notFoundHandler
     const wsHandlers = this.wsHandlers
     const bunServeOptions = this.bunServeOptions
+
+    // Setup static assets if needed
+    await this.setupStaticAssetsIfNeeded()
 
     // Setup WebSocket if needed
     this.setupWebSocketIfNeeded(wsHandlers, bunServeOptions)
@@ -462,6 +473,14 @@ export class BunServerInstance {
     this.middlewareEngine.useGlobal(corsMiddleware.run.bind(corsMiddleware))
   }
 
+  /**
+   * Serve static assets
+   */
+  useStaticAssets(path: string, options?: BunStaticAssetsOptions) {
+    this.logger.log(`Configuring static assets serving from path: ${path} with options: ${JSON.stringify(options)}`)
+    this.staticAssetsOptions = { path, options }
+  }
+
   // ============================================
   // Private Helper Methods
   // ============================================
@@ -524,6 +543,81 @@ export class BunServerInstance {
         data: (await this.wsOptions.clientDataFactory?.(bunRequest)) ?? {},
       },
     )
+  }
+
+  private async setupStaticAssetsIfNeeded() {
+    if (!this.staticAssetsOptions) return
+
+    const { path, options } = this.staticAssetsOptions
+
+    // Read all files from the specified directory
+    const files = await readdir(path, { withFileTypes: true, recursive: true })
+    // Register each file as a static route
+    const flattenFiles = files.flat(Infinity)
+    if (flattenFiles.length === 0) return
+
+    const useStatic = options?.useStatic ?? false
+    for (const file of flattenFiles) {
+      if (!file.isFile()) continue
+
+      const relativePath = file.parentPath.replace(path, '')
+      const routePath = relativePath.startsWith('/') ? [relativePath, file.name].join('/') : `/${file.name}`
+      if (useStatic) {
+        const bunFile = Bun.file(join(file.parentPath, file.name))
+        this.routes[routePath] = {
+          GET: new Response(await bunFile.bytes(), {
+            headers: {
+              'Content-Type': bunFile.type,
+            },
+          }),
+        }
+      }
+      else {
+        this.delegateRouteHandler('GET', routePath, async (req, res) => {
+          const bunFile = Bun.file(join(file.parentPath, file.name))
+          // Because we wrap Bun routes handler in middleware, we need to handle 404 ourselves
+          if (!await bunFile.exists()) {
+            this.notFoundHandler(req, res)
+            return
+          }
+
+          const ifModifiedSince = req.headers.get('if-modified-since')
+          if (ifModifiedSince) {
+            const lastModified = bunFile.lastModified
+            // Compare dates
+            if (new Date(ifModifiedSince).getTime() >= lastModified) {
+              res.setStatus(304)
+              res.end()
+              return
+            }
+          }
+
+          const range = req.headers.get('range')
+          if (range) {
+            const fileSize = bunFile.size
+            const match = /bytes=(\d*)-(\d*)/.exec(range)
+            if (match) {
+              const start = parseInt(match[1], 10) || 0
+              const end = parseInt(match[2], 10) || (fileSize - 1)
+              if (start >= 0 && end < fileSize && start <= end) {
+                res.setStatus(206)
+                res.setHeader('Content-Range', `bytes ${start.toString()}-${(end).toString()}/${fileSize.toString()}`)
+                res.end(bunFile.slice(start, end + 1))
+                return
+              }
+              else {
+                res.setStatus(416) // Range Not Satisfiable
+                res.setHeader('Content-Range', `bytes */${fileSize.toString()}`)
+                res.end()
+                return
+              }
+            }
+          }
+
+          res.end(bunFile)
+        })
+      }
+    }
   }
 
   private setupWebSocketIfNeeded(
