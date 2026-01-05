@@ -8,6 +8,7 @@
   ],
   "ignoreFiles": [
     "eslint.config.ts",
+    "lib/test/http/static/assets/root.js",
     "lib/test/http/versioning/versioning.controllers.ts"
   ],
   "ignoreDependencies": ["@types/helmet", "class-transformer", "better-auth"],
