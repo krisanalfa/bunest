@@ -45,7 +45,7 @@ describe('BunAdapter Guard', () => {
       unix: socket,
       headers: { 'x-allow-access': 'true' },
     })
-    const responseBody = await response.json()
+    const responseBody = await response.json() as { message: string }
     expect(response.status).toBe(200)
     expect(responseBody).toEqual({ message: 'Access granted' })
   })

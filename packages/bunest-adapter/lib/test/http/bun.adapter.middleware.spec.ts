@@ -125,7 +125,7 @@ describe('BunAdapter Middleware', () => {
         `http://localhost/dummy`,
         { unix: socket },
       )
-      const data = await response.json()
+      const data = await response.json() as { message: string, dummyProperty: string, globalProperty: string }
       expect(data).toEqual({
         message: 'Hello, Bun!',
         dummyProperty: 'dummyValue',
@@ -138,7 +138,7 @@ describe('BunAdapter Middleware', () => {
         `http://localhost/dummy/skip`,
         { unix: socket },
       )
-      const data = await response.json()
+      const data = await response.json() as { message: string, dummyProperty: unknown, globalProperty: string }
       expect(data).toEqual({
         message: 'This route skips the middleware.',
         dummyProperty: undefined,
@@ -151,7 +151,7 @@ describe('BunAdapter Middleware', () => {
         `http://localhost/another-dummy`,
         { unix: socket },
       )
-      const data = await response.json()
+      const data = await response.json() as { message: string, globalProperty: string }
       expect(data).toEqual({
         message: 'Another Dummy!',
         globalProperty: 'globalValue',
@@ -163,7 +163,7 @@ describe('BunAdapter Middleware', () => {
         `http://localhost/dummy/dont-skip`,
         { unix: socket },
       )
-      const data = await response.json()
+      const data = await response.json() as { message: string, dummyProperty: string, globalProperty: string }
       expect(data).toEqual({
         message: 'This route does not skip the middleware.',
         dummyProperty: 'dummyValue',
@@ -269,7 +269,7 @@ describe('BunAdapter Middleware Versioning', () => {
         { unix: socket2 },
       )
       expect(response.status).toBe(200)
-      const data = await response.json()
+      const data = await response.json() as { version: string, message: string, loggerApplied: unknown }
       expect(data).toEqual({
         version: '1',
         message: 'All cats from version 1',
@@ -283,7 +283,7 @@ describe('BunAdapter Middleware Versioning', () => {
         { unix: socket2 },
       )
       expect(response.status).toBe(200)
-      const data = await response.json()
+      const data = await response.json() as { version: string, message: string, loggerApplied: boolean }
       expect(data).toEqual({
         version: '2',
         message: 'All cats from version 2',

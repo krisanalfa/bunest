@@ -396,7 +396,6 @@ export class BunRequest {
    * console.log(name); // "John"
    * ```
    */
-  // eslint-disable-next-line @typescript-eslint/no-deprecated, sonarjs/deprecation
   formData(): Promise<FormData> { return this.nativeRequest.formData() as unknown as Promise<FormData> }
 
   /**

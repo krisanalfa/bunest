@@ -75,7 +75,7 @@ describe('Bun SubDomain', () => {
       headers: { host: 'unknown.localhost' },
     })
     expect(response.status).toBe(404)
-    const data = await response.json()
+    const data = await response.json() as { statusCode: number, message: string, error: string }
     expect(data).toEqual({
       statusCode: 404,
       message: 'Cannot GET /a',

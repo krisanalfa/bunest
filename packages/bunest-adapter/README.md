@@ -31,6 +31,19 @@ This project provides a native Bun adapter for NestJS, allowing developers to le
     - [Broadcasting Messages](#broadcasting-messages)
     - [Secure WebSocket (WSS)](#secure-websocket-wss)
     - [Limitations](#limitations)
+  - [GraphQL Support](#graphql-support)
+    - [Basic GraphQL Setup](#basic-graphql-setup)
+    - [GraphQL with Subscriptions](#graphql-with-subscriptions)
+  - [GraphQL Yoga Driver (Recommended)](#graphql-yoga-driver-recommended)
+    - [Why GraphQL Yoga?](#why-graphql-yoga)
+    - [Basic Setup](#basic-setup)
+    - [Configuration Options](#configuration-options)
+    - [Complete Example with Resolvers](#complete-example-with-resolvers)
+    - [Field Middleware Support](#field-middleware-support)
+    - [Subscriptions with Custom Headers](#subscriptions-with-custom-headers)
+    - [Error Handling](#error-handling)
+    - [BunYogaDriver Limitations](#bunyogadriver-limitations)
+  - [GraphQL Limitations (General)](#graphql-limitations-general)
   - [HTTPS](#https)
   - [Code Quality](#code-quality)
 - [Request / Response Objects](#request--response-objects)
@@ -60,10 +73,16 @@ import { Server } from "bun";
 import { AppModule } from "./app.module.js";
 
 async function main() {
-  const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter());
+  const app = await NestFactory.create<NestBunApplication>(
+    AppModule,
+    new BunAdapter(),
+  );
   await app.listen(3000);
-  const server = app.getHttpServer().getBunServer()
-  Logger.log(`Server started on ${server?.url.toString() ?? 'http://localhost:3000'}`, 'NestApplication')
+  const server = app.getHttpServer().getBunServer();
+  Logger.log(
+    `Server started on ${server?.url.toString() ?? "http://localhost:3000"}`,
+    "NestApplication",
+  );
 }
 
 await main();
@@ -382,15 +401,15 @@ class FilesController {
 Full support for [Server-Sent Events](https://docs.nestjs.com/techniques/server-sent-events) using the `@Sse()` decorator. SSE allows servers to push real-time updates to clients over HTTP:
 
 ```ts
-import { Controller, Sse, MessageEvent } from '@nestjs/common';
-import { Observable, interval, map } from 'rxjs';
+import { Controller, Sse, MessageEvent } from "@nestjs/common";
+import { Observable, interval, map } from "rxjs";
 
 @Controller()
 class EventsController {
-  @Sse('/sse')
+  @Sse("/sse")
   sendEvents(): Observable<MessageEvent> {
     return interval(1000).pipe(
-      map(num => ({
+      map((num) => ({
         data: `SSE message ${num.toString()}`,
       })),
     );
@@ -401,18 +420,18 @@ class EventsController {
 **Client Connection Example:**
 
 ```ts
-const eventSource = new EventSource('http://localhost:3000/sse');
+const eventSource = new EventSource("http://localhost:3000/sse");
 
 eventSource.onopen = () => {
-  console.log('SSE connection opened');
+  console.log("SSE connection opened");
 };
 
 eventSource.onmessage = (event) => {
-  console.log('Received:', event.data); // "SSE message 0", "SSE message 1", etc.
+  console.log("Received:", event.data); // "SSE message 0", "SSE message 1", etc.
 };
 
 eventSource.onerror = (error) => {
-  console.error('SSE error:', error);
+  console.error("SSE error:", error);
   eventSource.close();
 };
 
@@ -423,20 +442,20 @@ eventSource.onerror = (error) => {
 **For HTTPS/Secure Connections:**
 
 ```ts
-import { EventSource } from 'eventsource'; // npm package for Node.js
+import { EventSource } from "eventsource"; // npm package for Node.js
 
-const eventSource = new EventSource('https://localhost:3000/sse', {
-  fetch: (url, init) => fetch(url, {
-    ...init,
-    tls: { rejectUnauthorized: false }, // For self-signed certificates
-  }),
+const eventSource = new EventSource("https://localhost:3000/sse", {
+  fetch: (url, init) =>
+    fetch(url, {
+      ...init,
+      tls: { rejectUnauthorized: false }, // For self-signed certificates
+    }),
 });
 
 eventSource.onmessage = (event) => {
-  console.log('Received:', event.data);
+  console.log("Received:", event.data);
 };
 ```
-
 
 #### Versioning
 
@@ -496,13 +515,17 @@ app.enableCors((req: BunRequest, callback) => {
 You can also use NestJS's `CorsOptions` type for static configuration.
 
 ```ts
-const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter(), {
-  cors: {
-    origin: "https://example.com",
-    methods: ["GET", "POST", "PUT"],
-    credentials: true,
+const app = await NestFactory.create<NestBunApplication>(
+  AppModule,
+  new BunAdapter(),
+  {
+    cors: {
+      origin: "https://example.com",
+      methods: ["GET", "POST", "PUT"],
+      credentials: true,
+    },
   },
-});
+);
 ```
 
 #### Cookies
@@ -536,7 +559,10 @@ Compatible with popular Express middleware:
 ```ts
 import helmet from "helmet";
 
-const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter());
+const app = await NestFactory.create<NestBunApplication>(
+  AppModule,
+  new BunAdapter(),
+);
 app.use(helmet());
 ```
 
@@ -554,15 +580,18 @@ Serve static files from your NestJS application using Bun's native file serving 
 **File Routes (Default)** - Reads files from the filesystem on each request, supports range requests, respects middlewares, and provides full HTTP feature compatibility:
 
 ```ts
-import { join } from 'path';
+import { join } from "path";
 
-const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter());
+const app = await NestFactory.create<NestBunApplication>(
+  AppModule,
+  new BunAdapter(),
+);
 
 // Serve static assets using file routes (default)
-app.useStaticAssets(join(__dirname, 'public'));
+app.useStaticAssets(join(__dirname, "public"));
 
 // Or explicitly set useStatic to false
-app.useStaticAssets(join(__dirname, 'public'), { useStatic: false });
+app.useStaticAssets(join(__dirname, "public"), { useStatic: false });
 
 await app.listen(3000);
 
@@ -577,12 +606,15 @@ await app.listen(3000);
 **Static Routes** - Serves files directly from memory for maximum performance, but with some limitations (no range requests, doesn't respect middlewares):
 
 ```ts
-import { join } from 'path';
+import { join } from "path";
 
-const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter());
+const app = await NestFactory.create<NestBunApplication>(
+  AppModule,
+  new BunAdapter(),
+);
 
 // Serve static assets using static routes (faster, but with limitations)
-app.useStaticAssets(join(__dirname, 'public'), { useStatic: true });
+app.useStaticAssets(join(__dirname, "public"), { useStatic: true });
 
 await app.listen(3000);
 ```
@@ -593,11 +625,11 @@ await app.listen(3000);
 const app = await NestFactory.create<NestBunApplication>(
   AppModule,
   new BunAdapter(),
-  { cors: true }
+  { cors: true },
 );
 
 // Static assets will respect CORS settings when using file routes
-app.useStaticAssets(join(__dirname, 'public'), { useStatic: false });
+app.useStaticAssets(join(__dirname, "public"), { useStatic: false });
 ```
 
 **Choosing Between Modes:**
@@ -644,7 +676,10 @@ class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 }
 
 // Enable WebSocket support in your application
-const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter());
+const app = await NestFactory.create<NestBunApplication>(
+  AppModule,
+  new BunAdapter(),
+);
 app.useWebSocketAdapter(new BunWsAdapter(app));
 await app.listen(3000);
 ```
@@ -785,13 +820,13 @@ import {
   OnGatewayConnection,
 } from "@nestjs/websockets";
 import { ServerWebSocket } from "bun";
-import { BunPreflightHttpServer } from "@krisanalfa/bunest-adapter";
+import { BunServerInstance } from "@krisanalfa/bunest-adapter";
 
-@Injectable() // Mandatory to be able to inject `BunPreflightHttpServer`
+@Injectable() // Mandatory to be able to inject `BunServerInstance`
 @WebSocketGateway()
 class BroadcastGateway implements OnGatewayConnection {
   @WebSocketServer()
-  server!: BunPreflightHttpServer; // Inject BunPreflightHttpServer
+  server!: BunServerInstance; // Inject BunServerInstance
 
   private readonly roomName = "global-room";
 
@@ -806,7 +841,7 @@ class BroadcastGateway implements OnGatewayConnection {
     @ConnectedSocket() socket: ServerWebSocket,
   ) {
     // Get subscriber count
-    const count = this.server.getBunServer().subscriberCount(this.roomName);
+    const count = this.server.getBunServer()?.subscriberCount(this.roomName);
 
     // Publish to all subscribers in the room
     socket.publishText(
@@ -836,7 +871,11 @@ The Bun adapter supports secure WebSocket connections (WSS) using TLS/SSL certif
 **Using BunAdapter constructor options:**
 
 ```ts
-import { BunAdapter, BunWsAdapter, NestBunApplication } from "@krisanalfa/bunest-adapter";
+import {
+  BunAdapter,
+  BunWsAdapter,
+  NestBunApplication,
+} from "@krisanalfa/bunest-adapter";
 import { NestFactory } from "@nestjs/core";
 
 const app = await NestFactory.create<NestBunApplication>(
@@ -859,15 +898,23 @@ await app.listen(3000);
 **Using NestFactory.create httpsOptions:**
 
 ```ts
-import { BunAdapter, BunWsAdapter, NestBunApplication } from "@krisanalfa/bunest-adapter";
+import {
+  BunAdapter,
+  BunWsAdapter,
+  NestBunApplication,
+} from "@krisanalfa/bunest-adapter";
 import { NestFactory } from "@nestjs/core";
 
-const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter(), {
-  httpsOptions: {
-    cert: Bun.file("/path/to/cert.pem"),
-    key: Bun.file("/path/to/key.pem"),
+const app = await NestFactory.create<NestBunApplication>(
+  AppModule,
+  new BunAdapter(),
+  {
+    httpsOptions: {
+      cert: Bun.file("/path/to/cert.pem"),
+      key: Bun.file("/path/to/key.pem"),
+    },
   },
-});
+);
 
 app.useWebSocketAdapter(new BunWsAdapter(app));
 await app.listen(3000);
@@ -878,7 +925,11 @@ await app.listen(3000);
 You can also run secure WebSocket servers over Unix sockets:
 
 ```ts
-import { BunAdapter, BunWsAdapter, NestBunApplication } from "@krisanalfa/bunest-adapter";
+import {
+  BunAdapter,
+  BunWsAdapter,
+  NestBunApplication,
+} from "@krisanalfa/bunest-adapter";
 import { NestFactory } from "@nestjs/core";
 
 const app = await NestFactory.create<NestBunApplication>(
@@ -936,10 +987,437 @@ class ChatGateway {
 }
 
 // WebSocket will be available on the same port as HTTP
-const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter());
+const app = await NestFactory.create<NestBunApplication>(
+  AppModule,
+  new BunAdapter(),
+);
 app.useWebSocketAdapter(new BunWsAdapter(app));
 await app.listen(3000); // Both HTTP and WebSocket use port 3000
 ```
+
+### GraphQL Support
+
+The Bun adapter provides full support for GraphQL using the `@nestjs/apollo` package. Due to Apollo Server's internal dependency on Express-specific features, you need to enable GraphQL compatibility mode by setting the `withGraphQL` option in the `BunAdapter` constructor.
+
+#### Basic GraphQL Setup
+
+To use GraphQL with the Bun adapter, you need to:
+
+1. Install the required dependencies:
+
+```bash
+bun add @nestjs/apollo @nestjs/graphql @apollo/server graphql
+```
+
+2. Enable GraphQL support in the adapter:
+
+```ts
+import { BunAdapter, NestBunApplication } from "@krisanalfa/bunest-adapter";
+import { NestFactory } from "@nestjs/core";
+import { Module } from "@nestjs/common";
+import { GraphQLModule } from "@nestjs/graphql";
+import { ApolloDriver, ApolloDriverConfig } from "@nestjs/apollo";
+
+@Module({
+  imports: [
+    GraphQLModule.forRoot<ApolloDriverConfig>({
+      driver: ApolloDriver,
+    }),
+  ],
+})
+class AppModule {}
+
+async function bootstrap() {
+  const app = await NestFactory.create<NestBunApplication>(
+    AppModule,
+    new BunAdapter({
+      withGraphQL: true, // Enable GraphQL compatibility mode
+    }),
+  );
+  await app.listen(3000);
+}
+
+bootstrap();
+```
+
+**What does `withGraphQL` do?**
+
+When you set `withGraphQL: true`, the Bun adapter:
+
+- Overrides the `getType()` method to return `'express'` instead of `'bun'`, which allows Apollo Server to work correctly
+- Ensures compatibility with NestJS's GraphQL module internals that expect Express or Fastify
+
+**Basic GraphQL Example:**
+
+```ts
+import {
+  Resolver,
+  Query,
+  Args,
+  ID,
+  Field,
+  ObjectType,
+  Mutation,
+} from "@nestjs/graphql";
+import { Injectable, NotFoundException } from "@nestjs/common";
+
+@ObjectType()
+class User {
+  @Field(() => ID)
+  id!: string;
+
+  @Field(() => String)
+  name!: string;
+
+  @Field(() => String)
+  email!: string;
+}
+
+@Resolver(() => User)
+@Injectable()
+class UserResolver {
+  private users: User[] = [
+    { id: "1", name: "John Doe", email: "john@example.com" },
+    { id: "2", name: "Jane Smith", email: "jane@example.com" },
+  ];
+
+  @Query(() => User, { name: "user" })
+  getUser(@Args("id", { type: () => ID }) id: string): User {
+    const user = this.users.find((u) => u.id === id);
+    if (!user) {
+      throw new NotFoundException(`User with id ${id} not found`);
+    }
+    return user;
+  }
+
+  @Query(() => [User], { name: "users" })
+  getUsers(): User[] {
+    return this.users;
+  }
+
+  @Mutation(() => User, { name: "createUser" })
+  createUser(
+    @Args("name", { type: () => String }) name: string,
+    @Args("email", { type: () => String }) email: string,
+  ): User {
+    const newUser = {
+      id: (this.users.length + 1).toString(),
+      name,
+      email,
+    };
+    this.users.push(newUser);
+    return newUser;
+  }
+}
+```
+
+Access your GraphQL playground at `http://localhost:3000/graphql` and execute queries:
+
+```graphql
+query GetUser {
+  user(id: "1") {
+    id
+    name
+    email
+  }
+}
+
+mutation CreateUser {
+  createUser(name: "Alice", email: "alice@example.com") {
+    id
+    name
+    email
+  }
+}
+```
+
+#### GraphQL with Subscriptions
+
+The Bun adapter supports GraphQL subscriptions using Bun's native WebSocket implementation. To enable subscriptions, you need to provide a custom WebSocket handler to the `withGraphQL` option:
+
+```bash
+bun add graphql-subscriptions graphql-ws
+```
+
+```ts
+import { BunAdapter, NestBunApplication } from "@krisanalfa/bunest-adapter";
+import { NestFactory } from "@nestjs/core";
+import { GraphQLModule, GraphQLSchemaHost } from "@nestjs/graphql";
+import { ApolloDriver, ApolloDriverConfig } from "@nestjs/apollo";
+import { makeHandler } from "graphql-ws/use/bun";
+import { Module, Injectable } from "@nestjs/common";
+import { Resolver, Query, Mutation, Subscription, Args } from "@nestjs/graphql";
+import { PubSub } from "graphql-subscriptions";
+
+const pubSub = new PubSub();
+
+@Resolver()
+class NotificationResolver {
+  @Query(() => String)
+  hello(): string {
+    return "Hello World!";
+  }
+
+  @Mutation(() => Boolean)
+  async publishNotification(
+    @Args("message") message: string,
+  ): Promise<boolean> {
+    await pubSub.publish("notificationSent", { notificationSent: message });
+    return true;
+  }
+
+  @Subscription(() => String, { name: "notificationSent" })
+  notificationSent() {
+    return pubSub.asyncIterableIterator("notificationSent");
+  }
+}
+
+@Module({
+  imports: [
+    GraphQLModule.forRoot<ApolloDriverConfig>({
+      driver: ApolloDriver,
+      autoSchemaFile: true,
+      subscriptions: {
+        "graphql-ws": true,
+      },
+    }),
+  ],
+  providers: [NotificationResolver],
+})
+class AppModule {}
+
+async function bootstrap() {
+  const app = await NestFactory.create<NestBunApplication>(
+    AppModule,
+    new BunAdapter({
+      withGraphQL: {
+        // Spread the WebSocket handlers from graphql-ws
+        ...makeHandler({
+          schema: () => {
+            const schemaHost = app.get(GraphQLSchemaHost);
+            return schemaHost.schema;
+          },
+        }),
+      },
+    }),
+  );
+  await app.listen(3000);
+}
+
+bootstrap();
+```
+
+**Client Example:**
+
+```ts
+import {
+  ApolloClient,
+  InMemoryCache,
+  HttpLink,
+  ApolloLink,
+  gql,
+} from "@apollo/client";
+import { GraphQLWsLink } from "@apollo/client/link/subscriptions";
+import { createClient } from "graphql-ws";
+import { OperationTypeNode } from "graphql";
+
+const httpLink = new HttpLink({
+  uri: "http://localhost:3000/graphql",
+});
+
+const wsLink = new GraphQLWsLink(
+  createClient({
+    url: "ws://localhost:3000/graphql",
+  }),
+);
+
+// Split links based on operation type
+const splitLink = ApolloLink.split(
+  ({ operationType }) => operationType === OperationTypeNode.SUBSCRIPTION,
+  wsLink,
+  httpLink,
+);
+
+const client = new ApolloClient({
+  link: splitLink,
+  cache: new InMemoryCache(),
+});
+
+// Subscribe to notifications
+client
+  .subscribe({
+    query: gql`
+      subscription OnNotification {
+        notificationSent
+      }
+    `,
+  })
+  .subscribe({
+    next: (data) => console.log("Received:", data),
+    error: (error) => console.error("Error:", error),
+  });
+
+// Trigger a notification
+await client.mutate({
+  mutation: gql`
+    mutation PublishNotification($message: String!) {
+      publishNotification(message: $message)
+    }
+  `,
+  variables: { message: "Hello from subscription!" },
+});
+```
+
+### GraphQL Yoga Driver (Recommended)
+
+For better performance, we provide a native `BunYogaDriver` that uses [GraphQL Yoga](https://the-guild.dev/graphql/yoga-server) instead of Apollo Server. **This driver is ~35% faster than Apollo Server** and utilizes all Bun's native features without compatibility layers.
+
+| Framework                       | Requests per Second |
+|---------------------------------|---------------------|
+| Bun Adapter + Apollo Server     | 16066.2553 rps      |
+| Bun Adapter + GraphQL Yoga      | 21773.3745 rps      |
+| Express Adapter + Apollo Server | 12523.1951 rps      |
+
+#### Basic Setup
+
+1. Install the required dependencies:
+
+```bash
+bun add @nestjs/graphql graphql graphql-yoga
+# If you need subscriptions support:
+bun add graphql-ws
+```
+
+2. Configure your application with `BunYogaDriver`:
+
+```ts
+import {
+  BunAdapter,
+  BunYogaDriver,
+  BunYogaDriverConfig,
+  NestBunApplication,
+} from "@krisanalfa/bunest-adapter";
+import { Module } from "@nestjs/common";
+import { GraphQLModule } from "@nestjs/graphql";
+import { NestFactory } from "@nestjs/core";
+
+@Module({
+  imports: [
+    GraphQLModule.forRoot<BunYogaDriverConfig>({
+      driver: BunYogaDriver,
+      autoSchemaFile: true, // Required for schema generation
+    }),
+  ],
+})
+class AppModule {}
+
+async function bootstrap() {
+  const app = await NestFactory.create<NestBunApplication>(
+    AppModule,
+    new BunAdapter(), // No need for withGraphQL option!
+  );
+  await app.listen(3000);
+}
+
+bootstrap();
+```
+
+> **Note:** Unlike Apollo Server, the `BunYogaDriver` does not require the `withGraphQL: true` option in the `BunAdapter` constructor.
+
+#### Configuration Options
+
+The `BunYogaDriverConfig` provides the following options:
+
+```ts
+GraphQLModule.forRoot<BunYogaDriverConfig>({
+  driver: BunYogaDriver,
+
+  // Required: Must be true to generate schema automatically
+  autoSchemaFile: true,
+
+  // Optional: Custom GraphQL endpoint path (default: '/graphql')
+  path: "/graphql",
+
+  // Optional: Enable GraphiQL interface for testing
+  graphiql: true,
+
+  // Optional: Enable WebSocket subscriptions
+  subscriptions: {
+    "graphql-ws": true,
+  },
+
+  // Optional: Transform HTTP exceptions to GraphQL errors with proper codes
+  // When enabled, NestJS HttpExceptions are automatically mapped to GraphQL error codes:
+  // - 400 Bad Request -> BAD_REQUEST
+  // - 401 Unauthorized -> UNAUTHENTICATED
+  // - 403 Forbidden -> FORBIDDEN
+  // - 422 Unprocessable Entity -> BAD_USER_INPUT
+  autoTransformHttpErrors: true,
+
+  // Optional: Custom context factory for WebSocket connections
+  clientDataFactory: (req) => {
+    return { userId: req.headers.get("x-user-id") };
+  },
+
+  // Optional: Custom context for resolvers
+  context: ({ request }) => ({
+    // Add custom properties to the GraphQL context
+    userAgent: request.headers.get("user-agent"),
+  }),
+});
+```
+
+#### BunYogaDriver Limitations
+
+- **Code First Only**: Only supports the Code First approach with decorators. Schema First is not supported.
+- **Subscriptions Protocol**: Only `graphql-ws` protocol is supported for subscriptions.
+- **No Middleware Support**: Does not support NestJS HTTP middleware for GraphQL requests.
+
+### GraphQL Limitations (General)
+
+**Supported Drivers:** The Bun adapter supports Apollo GraphQL driver (`@nestjs/apollo`) and the native `BunYogaDriver`. Mercurius (`@nestjs/mercurius`) is not supported.
+
+**Apollo GraphQL Subscriptions:** When using Apollo driver, subscriptions only work with `graphql-ws`. Custom configurations for `graphql-ws` defined in the GraphQL module (such as [authentication over WebSockets](https://docs.nestjs.com/graphql/subscriptions#authentication-over-websockets)) will not be applied.
+
+**Workaround:** To customize `graphql-ws` behavior, use the `makeHandler` function from `graphql-ws/use/bun` when configuring the `withGraphQL` option:
+
+```ts
+import { makeHandler } from "graphql-ws/use/bun";
+
+const app = await NestFactory.create<NestBunApplication>(
+  AppModule,
+  new BunAdapter({
+    withGraphQL: {
+      ...makeHandler({
+        schema: () => {
+          const schemaHost = app.get(GraphQLSchemaHost);
+          return schemaHost.schema;
+        },
+        // Add your custom graphql-ws options here
+        onConnect: async (ctx) => {
+          // Custom authentication logic
+          const token = ctx.connectionParams?.authToken;
+          if (!token) {
+            throw new Error("Missing auth token!");
+          }
+          // Verify token and return user context
+          return { user: await validateToken(token) };
+        },
+        context: (ctx) => {
+          // Access authenticated user in resolvers
+          return { user: ctx.extra.user };
+        },
+      }),
+      clientDataFactory: (req) => {
+        // Optional: extract data from initial HTTP request
+        return { uid: req.headers.get("x-user-id") };
+      },
+    },
+  }),
+);
+```
+
+**Code First Only:** The GraphQL support currently works with the Code First (decorators) approach only. Schema First approach is not yet supported.
 
 ### Bun File API Support
 
@@ -1373,6 +1851,7 @@ oha -c 125 -n 1000000 --no-tui "http://127.0.0.1:3000/"
 > **Pure Bun** is the fastest at **80,743 req/s**. **Nest + Bun + Native Bun Adapter** achieves **~86%** of Pure Bun's performance while providing full NestJS features, and is **~5x faster** than Nest + Node + Express. Compared to Bun with Express adapter, the native Bun adapter is **~1.6x faster**.
 
 Bonus if you use Unix sockets:
+
 ```
 Summary:
   Success rate:	100.00%
@@ -1461,6 +1940,7 @@ Contributions are welcome! Please open issues or submit pull requests for bug fi
 - Enhanced trusted proxy configuration for host header handling
 - Improved documentation and examples
 - Release automation via CI/CD pipelines
+- Separate package for GraphQL Yoga support with Bun
 
 ## License
 

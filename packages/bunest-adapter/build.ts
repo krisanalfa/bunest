@@ -12,10 +12,6 @@ await Bun.build({
   minify: false,
   sourcemap: true,
   packages: 'external',
-  external: [
-    '@nestjs/common',
-    '@nestjs/core',
-  ],
 })
 
 // Generate TypeScript declarations
@@ -46,8 +42,8 @@ const keepFiles = [
   'bun.request.d.ts',
   'bun.response.d.ts',
   'bun.file.interceptor.d.ts',
-  'bun.preflight-http-server.d.ts',
   'bun.server-instance.d.ts',
+  'bun.yoga.driver.d.ts',
   'bun.internal.types.d.ts',
 ]
 

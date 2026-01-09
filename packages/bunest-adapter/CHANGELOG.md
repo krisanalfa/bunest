@@ -23,3 +23,7 @@
   - Introduced `NestBunApplication` for better type safety and clarity.
 - Support static assets.
 - Added `express-session` middleware support (experimental, use with caution).
+
+### 0.6.0-rc.1
+- Added GraphQL support via `@nestjs/graphql` module.
+- Added Yoga driver for GraphQL integration.

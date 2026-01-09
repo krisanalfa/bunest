@@ -53,7 +53,7 @@ describe('BunAdapter Serve-Static Assets', () => {
       })
       expect(olderResponse.status).toBe(200)
       // body should be present
-      const olderBody = await olderResponse.json()
+      const olderBody = await olderResponse.json() as { root: boolean }
       expect(olderBody).toEqual({ root: true })
     })
 

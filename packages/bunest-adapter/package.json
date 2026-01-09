@@ -1,6 +1,6 @@
 {
   "name": "@krisanalfa/bunest-adapter",
-  "version": "0.5.0",
+  "version": "0.6.0-rc.1",
   "description": "High-performance Bun adapter for NestJS framework",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,7 +22,7 @@
     "knip": "knip",
     "pretest": "bun run knip",
     "test": "bun test",
-    "prebuild": "bun run test",
+    "prebuildxxx": "bun run test",
     "build": "bun run build.ts",
     "prepublishOnly": "bun run build"
   },
@@ -50,13 +50,21 @@
   "peerDependencies": {
     "@nestjs/common": "^11.1.11",
     "@nestjs/core": "^11.1.11",
-    "@nestjs/websockets": "^11.1.11"
+    "@nestjs/graphql": "^13.2.3",
+    "@nestjs/websockets": "^11.1.11",
+    "graphql-ws": "^6.0.6",
+    "graphql-yoga": "^5.18.0"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "qs": "^6.14.1"
   },
   "devDependencies": {
+    "@apollo/client": "^4.0.11",
+    "@apollo/server": "^5.2.0",
+    "@as-integrations/express5": "^1.1.2",
+    "@nestjs/apollo": "^13.2.3",
+    "@nestjs/graphql": "^13.2.3",
     "@nestjs/testing": "^11.1.11",
     "@thallesp/nestjs-better-auth": "^2.2.0",
     "@types/cors": "^2.8.19",
@@ -68,10 +76,14 @@
     "class-validator": "^0.14.3",
     "eventsource": "^4.1.0",
     "express-session": "^1.18.2",
+    "graphql": "^16.12.0",
+    "graphql-subscriptions": "^3.0.0",
+    "graphql-ws": "^6.0.6",
     "helmet": "^8.1.0",
     "knip": "^5.79.0",
     "rxjs": "^7.8.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "ws": "^8.19.0"
   },
   "engines": {
     "bun": ">=1.3.0"

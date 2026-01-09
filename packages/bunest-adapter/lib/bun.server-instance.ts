@@ -3,12 +3,13 @@ import {
   CorsOptionsDelegate,
 } from '@nestjs/common/interfaces/external/cors-options.interface.js'
 import { Logger, RequestMethod } from '@nestjs/common'
-import { BunRequest as NativeRequest, Serve, Server, ServerWebSocket } from 'bun'
+import { BunRequest as NativeRequest, Serve, Server, ServerWebSocket, WebSocketHandler, randomUUIDv7 } from 'bun'
+import { BaseWsInstance } from '@nestjs/websockets'
 import { RequestHandler } from '@nestjs/common/interfaces/index.js'
 import { join } from 'node:path'
 import { readdir } from 'node:fs/promises'
 
-import { BunStaticAssetsOptions, BunWsClientData, ServerOptions, WsData, WsHandlers, WsOptions } from './bun.internal.types.js'
+import { BunStaticAssetsOptions, BunWsClientData, GraphQLWsOptions, ServerOptions, WsData, WsHandlers, WsOptions } from './bun.internal.types.js'
 import { BunBodyParserMiddleware } from './bun.body-parser.middleware.js'
 import { BunCorsMiddleware } from './bun.cors.middleware.js'
 import { BunMiddlewareEngine } from './bun.middleware-engine.js'
@@ -48,8 +49,10 @@ type PathHandler = Partial<
  * WebSocket functionalities, and the listen method. This class is passed to
  * AbstractHttpAdapter.setInstance() and implements the methods that NestJS expects
  * from an HTTP server instance (similar to Express app or Fastify instance).
+ *
+ * This class also implements BaseWsInstance to be compatible with NestJS WebSocket adapters.
  */
-export class BunServerInstance {
+export class BunServerInstance implements BaseWsInstance {
   private readonly logger: Logger = new Logger('BunServerInstance', { timestamp: true })
   private readonly middlewareEngine = new BunMiddlewareEngine()
   private useVersioning = false
@@ -148,6 +151,31 @@ export class BunServerInstance {
     maybeHandler?: RequestHandler<BunRequest, BunResponse>,
   ): void {
     this.createHttpMethodHandler('POST')(pathOrHandler, maybeHandler)
+  }
+
+  /**
+   * @internal
+   * @param path
+   * @param handler
+   */
+  nativePost(path: string, handler: Serve.Handler<NativeRequest, Server<unknown>, Response>): void {
+    this.ensureRouteExists(path)
+    this.routes[path].POST = handler
+  }
+
+  /**
+   * @internal
+   * @param path
+   * @param handler
+   */
+  nativeGet(path: string, handler: Serve.Handler<NativeRequest, Server<unknown>, Response>): void {
+    this.ensureRouteExists(path)
+    this.routes[path].GET = handler
+  }
+
+  nativeOptions(path: string, handler: Serve.Handler<NativeRequest, Server<unknown>, Response>): void {
+    this.ensureRouteExists(path)
+    this.routes[path].OPTIONS = handler
   }
 
   put(
@@ -301,7 +329,6 @@ export class BunServerInstance {
         return undefined as unknown as Response
       }
 
-      // const bunResponse = new BunResponse()
       // Find the actual route handler or fall back to notFoundHandler
       const routeHandler = middlewareEngine.findRouteHandler(bunRequest.method, bunRequest.pathname) ?? notFoundHandler
       // Inline property access for hot path
@@ -315,9 +342,17 @@ export class BunServerInstance {
       return bunResponse.res()
     }
 
+    this.configureBunServerOptionsDefaults(bunServeOptions)
     this.httpServer = this.createServer(port, hostname, bunServeOptions, fetch)
     callback?.()
     return this.httpServer
+  }
+
+  private configureBunServerOptionsDefaults(
+    bunServeOptions: ServerOptions,
+  ): void {
+    bunServeOptions.development ??= false
+    bunServeOptions.id ??= randomUUIDv7()
   }
 
   /**
@@ -350,6 +385,45 @@ export class BunServerInstance {
       address: server.hostname ?? '127.0.0.1',
       port: server.port ?? 3000,
     }
+  }
+
+  // ============================================
+  // BaseWsInstance Implementation (NestJS compatibility)
+  // ============================================
+
+  /**
+   * NestJS compatibility method for event handling
+   * Required by BaseWsInstance interface
+   */
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type, @typescript-eslint/no-unused-vars
+  on(event: string, callback: Function): void {
+    // Bun servers don't use event-based patterns like Node.js
+    // This is a no-op for compatibility
+    this.logger.debug(`Event listener registered for: ${event}`)
+  }
+
+  /**
+   * NestJS compatibility method for one-time event handling
+   * Used by NestJS to listen for "error" events during HTTP server initialization
+   */
+  once(): void {
+    // no operation
+  }
+
+  /**
+   * NestJS compatibility method for removing event listeners
+   * Used by NestJS to remove "error" event listeners during HTTP server cleanup
+   */
+  removeListener(): void {
+    // no operation
+  }
+
+  /**
+   * Close the server (BaseWsInstance implementation)
+   * Proxy method for WebSocket server close
+   */
+  async close(): Promise<void> {
+    await this.stop(true)
   }
 
   /**
@@ -387,13 +461,6 @@ export class BunServerInstance {
     return this.httpServer
   }
 
-  /**
-   * Proxy method for WebSocket server close (BaseWsInstance)
-   */
-  async close(): Promise<void> {
-    await this.stop(true)
-  }
-
   // ============================================
   // Middleware & Parser Registration
   // ============================================
@@ -417,6 +484,10 @@ export class BunServerInstance {
    */
   setUseVersioning(value: boolean): void {
     this.useVersioning = value
+  }
+
+  setWsHandlers<TWebSocketData = BunWsClientData>(handlers: GraphQLWsOptions<TWebSocketData>): void {
+    this.bunServeOptions.withGraphQL = handlers as unknown as WebSocketHandler<BunWsClientData>
   }
 
   /**
@@ -624,7 +695,9 @@ export class BunServerInstance {
     wsHandlers: typeof this.wsHandlers,
     bunServeOptions: ServerOptions<BunWsClientData>,
   ): void {
-    const useWs = !!wsHandlers.onOpen && !!wsHandlers.onMessage && !!wsHandlers.onClose
+    const useWs
+      = (typeof bunServeOptions.withGraphQL === 'object' && typeof bunServeOptions.withGraphQL.open === 'function')
+        || (!!wsHandlers.onOpen && !!wsHandlers.onMessage && !!wsHandlers.onClose)
     if (!useWs) return
 
     this.useWs = true
@@ -635,26 +708,40 @@ export class BunServerInstance {
     const onOpen = wsHandlers.onOpen
     const onClose = wsHandlers.onClose
 
-    bunServeOptions.websocket = {
-      ...this.wsOptions,
-      message: (ws, message) => {
-        // Call client-specific handler first if exists
-        ws.data.onMessageInternal?.(message)
-        // Then call global handler (for NestJS framework)
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        onMessage?.(ws, message, getServer()!)
-      },
-      open: (ws) => {
-        onOpen?.(ws)
-      },
-      close: (ws, code, reason) => {
-        // Call client-specific handlers
-        ws.data.onCloseInternal?.()
-        ws.data.onDisconnect?.(ws)
-        // Then call global handler (for NestJS framework)
-        onClose?.(ws, code, reason)
-      },
+    const {
+      clientDataFactory,
+      ...graphQLSubscriptionWsHandlers
+    } = typeof bunServeOptions.withGraphQL === 'object' ? bunServeOptions.withGraphQL : {}
+    if (clientDataFactory) {
+      this.wsOptions.clientDataFactory = clientDataFactory
     }
+
+    bunServeOptions.websocket = Object.keys(graphQLSubscriptionWsHandlers).length > 0
+      ? {
+          ...this.wsOptions,
+          ...graphQLSubscriptionWsHandlers,
+        } as WebSocketHandler<BunWsClientData>
+      : {
+          ...this.wsOptions,
+          message: (ws, message) => {
+            // Call client-specific handler first if exists
+            ws.data.onMessageInternal?.(message)
+            // Then call global handler (for NestJS framework)
+            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+            onMessage?.(ws, message, getServer()!)
+          },
+          open: (ws) => {
+            onOpen?.(ws)
+          },
+          close: (ws, code, reason) => {
+            // Call client-specific handlers
+            ws.data.onCloseInternal?.()
+            ws.data.onDisconnect?.(ws)
+            // Then call global handler (for NestJS framework)
+            onClose?.(ws, code, reason)
+          },
+        }
+    delete bunServeOptions.withGraphQL
 
     const useWsCors = typeof this.wsOptions.cors !== 'undefined'
     if (!useWsCors) return

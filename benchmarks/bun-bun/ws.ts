@@ -1,10 +1,11 @@
 import { ConnectedSocket, MessageBody, OnGatewayConnection, SubscribeMessage, WebSocketGateway } from '@nestjs/websockets'
 import { Injectable, Logger, Module } from '@nestjs/common'
-import { Server, ServerWebSocket } from 'bun'
 import { NestFactory } from '@nestjs/core'
+import { ServerWebSocket } from 'bun'
 
 import { BunWsAdapter, BunWsAdapterOptions } from '@packages/bunest-adapter/lib/bun.ws-adapter.js'
 import { BunAdapter } from '@packages/bunest-adapter/lib/bun.adapter.js'
+import { NestBunApplication } from '@packages/bunest-adapter/lib/bun.internal.types.js'
 
 @Injectable()
 @WebSocketGateway<BunWsAdapterOptions>({
@@ -32,11 +33,12 @@ class AppGateway implements OnGatewayConnection {
 class AppModule {}
 
 async function main() {
-  const app = await NestFactory.create(AppModule, new BunAdapter())
+  const app = await NestFactory.create<NestBunApplication>(AppModule, new BunAdapter())
   app.useWebSocketAdapter(new BunWsAdapter(app))
   await app.listen(3000, '127.0.0.1')
-  const server = app.getHttpAdapter().getHttpServer() as Server<unknown>
-  Logger.log(`Server started on ${server.url.toString()}`, 'NestApplication')
+  const server = app.getHttpServer().getBunServer()
+  // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+  Logger.log(`Server started on ${server?.url.toString()}`, 'NestApplication')
 }
 
 await main()

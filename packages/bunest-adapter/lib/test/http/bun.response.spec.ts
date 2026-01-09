@@ -494,7 +494,7 @@ describe('BunResponse', () => {
       const response = await fetch('http://localhost/response/end-null', { unix: socket })
       expect(response.status).toBe(200)
       // null body is treated as JSON (typeof null === 'object')
-      const data = await response.json()
+      const data = await response.json() as null
       expect(data).toBeNull()
     })
 

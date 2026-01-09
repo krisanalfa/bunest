@@ -11,13 +11,13 @@ import { tmpdir } from 'node:os'
 
 import { BunWsAdapter, BunWsAdapterOptions } from '../../../bun.ws-adapter.js'
 import { BunAdapter } from '../../../bun.adapter.js'
-import { BunPreflightHttpServer } from '../../../bun.preflight-http-server.js'
+import { BunServerInstance } from '../../../bun.server-instance.js'
 
 @Injectable()
 @WebSocketGateway<BunWsAdapterOptions>({ cors: true })
 class SecureAppGateway implements OnGatewayConnection {
   @WebSocketServer()
-  readonly server!: BunPreflightHttpServer
+  readonly server!: BunServerInstance
 
   handleConnection(client: ServerWebSocket) {
     client.send(JSON.stringify({ event: 'advertise', data: 'Welcome to secure WebSocket!' }))
@@ -72,6 +72,7 @@ describe('BunWsAdapter WSS (Secure WebSocket)', () => {
 
     it('should be able to connect to WSS server', async () => {
       const ws = new WebSocket(url.replace('https', 'wss'), {
+        // @ts-expect-error Bun's WebSocket TLS options
         tls: { rejectUnauthorized: false },
       })
       const openResult = await new Promise<boolean>((resolve) => {
@@ -94,6 +95,7 @@ describe('BunWsAdapter WSS (Secure WebSocket)', () => {
 
     it('should handle connection events over WSS', async () => {
       const ws = new WebSocket(url.replace('https', 'wss'), {
+        // @ts-expect-error Bun's WebSocket TLS options
         tls: { rejectUnauthorized: false },
       })
 
@@ -120,6 +122,7 @@ describe('BunWsAdapter WSS (Secure WebSocket)', () => {
 
     it('should be able to send and receive messages over WSS', async () => {
       const ws = new WebSocket(url.replace('https', 'wss'), {
+        // @ts-expect-error Bun's WebSocket TLS options
         tls: { rejectUnauthorized: false },
       })
 
@@ -184,6 +187,7 @@ describe('BunWsAdapter WSS (Secure WebSocket)', () => {
 
     it('should be able to send and receive messages over WSS', async () => {
       const ws = new WebSocket(url.replace('https', 'wss'), {
+        // @ts-expect-error Bun's WebSocket TLS options
         tls: { rejectUnauthorized: false },
       })
 

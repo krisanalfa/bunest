@@ -188,6 +188,11 @@ export class BunResponse {
     if (this.ended) return
     this.ended = true
 
+    if (body instanceof Response) {
+      this.resolve(body)
+      return
+    }
+
     // If we're in streaming mode, close the stream writer
     if (this.streamWriter) {
       try {
@@ -221,6 +226,13 @@ export class BunResponse {
     }
 
     this.sendResponse(body)
+  }
+
+  send(body: string): void {
+    if (this.ended) return
+    this.ended = true
+
+    this.resolve(this.createResponse(body))
   }
 
   /**
@@ -754,8 +766,10 @@ export class BunResponse {
   private createResponse(body: BodyInit | null): Response {
     const headers = this.headers
     if (headers === null || headers.size === 0) {
+      // @ts-expect-error Should be BodyInit type
       return new Response(body, { status: this.statusCode })
     }
+    // @ts-expect-error Should be BodyInit type
     return new Response(body, {
       status: this.statusCode,
       headers: Object.fromEntries(headers),

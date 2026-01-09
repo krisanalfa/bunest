@@ -95,7 +95,7 @@ describe('BunAdapter Cancellable Interceptor', () => {
     })
 
     expect(response.status).toBe(200)
-    const data = await response.json()
+    const data = await response.json() as { message: string }
     expect(data).toEqual({ message: 'Hello, World!' })
     expect(pingSpy).toHaveBeenCalled()
     expect(cleanupSpy).not.toHaveBeenCalled()

@@ -44,7 +44,7 @@ describe('BunAdapter Validation Pipe', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'John Doe', age: 30 }),
     })
-    const validResponseBody = await validResponse.json()
+    const validResponseBody = await validResponse.json() as { message: string, data: DummyDto }
     expect(validResponse.status).toBe(201)
     expect(validResponseBody).toEqual({
       message: 'DTO is valid',

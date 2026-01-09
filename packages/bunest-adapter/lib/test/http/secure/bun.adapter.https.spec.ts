@@ -82,7 +82,7 @@ describe('Bun HTTPS Adapter', () => {
     })
 
     it('should handle SSE requests', async () => {
-      const eventSource = new EventSource(`${url}/sse`, {
+      const eventSource = new EventSource(`${url}sse`, {
         fetch: (url, init) => fetch(url, {
           ...init,
           tls: { rejectUnauthorized: false },
@@ -125,7 +125,7 @@ describe('Bun HTTPS Adapter', () => {
     })
 
     it('should be able to access secure session', async () => {
-      const res = await fetch(`${url}/session`, {
+      const res = await fetch(`${url}session`, {
         tls: { rejectUnauthorized: false },
       })
       expect(res.status).toBe(200)
@@ -135,7 +135,7 @@ describe('Bun HTTPS Adapter', () => {
       expect(cookie).toBeDefined()
       expect(cookie).not.toBeNull()
 
-      const res2 = await fetch(`${url}/session`, {
+      const res2 = await fetch(`${url}session`, {
         tls: { rejectUnauthorized: false },
         headers: {
           cookie: cookie as unknown as string,
@@ -184,7 +184,7 @@ describe('Bun HTTPS Adapter', () => {
     })
 
     it('should have encrypted socket in request', async () => {
-      const response = await fetch(`${url}/ping`, {
+      const response = await fetch(`${url}ping`, {
         tls: { rejectUnauthorized: false },
       })
       expect(response.status).toBe(200)

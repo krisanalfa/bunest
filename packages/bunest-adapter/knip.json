@@ -11,6 +11,6 @@
     "lib/test/http/static/assets/root.js",
     "lib/test/http/versioning/versioning.controllers.ts"
   ],
-  "ignoreDependencies": ["@types/helmet", "class-transformer", "better-auth"],
+  "ignoreDependencies": ["@types/helmet", "better-auth", "@as-integrations/express5"],
   "ignoreBinaries": ["eslint"]
 }

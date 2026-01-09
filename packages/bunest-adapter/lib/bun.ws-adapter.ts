@@ -10,7 +10,7 @@ import { ServerWebSocket } from 'bun'
 import { isNil } from '@nestjs/common/utils/shared.utils.js'
 
 import { BunWsClientData, WsData, WsOptions } from './bun.internal.types.js'
-import { BunPreflightHttpServer } from './bun.preflight-http-server.js'
+import { BunServerInstance } from './bun.server-instance.js'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -61,7 +61,7 @@ const defaultMessageParser: WsMessageParser = (data: WsData): WsParsedData => {
 /**
  * High-performance WebSocket adapter for Bun runtime with NestJS.
  */
-export class BunWsAdapter extends AbstractWsAdapter<BunPreflightHttpServer, BunWsClient> {
+export class BunWsAdapter extends AbstractWsAdapter<BunServerInstance, BunWsClient> {
   private readonly logger = new Logger(BunWsAdapter.name)
   private readonly nestApp: NestApplication
 
@@ -83,12 +83,12 @@ export class BunWsAdapter extends AbstractWsAdapter<BunPreflightHttpServer, BunW
   // Server Lifecycle
   // ───────────────────────────────────────────────────────────────────────────
 
-  create(_port: number, options?: BunWsAdapterOptions): BunPreflightHttpServer {
+  create(_port: number, options?: BunWsAdapterOptions): BunServerInstance {
     if (options?.messageParser) {
       this.messageParser = options.messageParser
     }
 
-    const server = this.nestApp.getHttpAdapter().getHttpServer() as BunPreflightHttpServer
+    const server = this.nestApp.getHttpAdapter().getHttpServer() as BunServerInstance
     const wsOptions = this.extractWsOptions(options)
 
     server.setWsOptions(wsOptions)
@@ -106,7 +106,7 @@ export class BunWsAdapter extends AbstractWsAdapter<BunPreflightHttpServer, BunW
     return wsOptions
   }
 
-  override async close(server: BunPreflightHttpServer): Promise<void> {
+  override async close(server: BunServerInstance): Promise<void> {
     await server.close()
   }
 
@@ -114,7 +114,7 @@ export class BunWsAdapter extends AbstractWsAdapter<BunPreflightHttpServer, BunW
   // Client Binding
   // ───────────────────────────────────────────────────────────────────────────
 
-  override bindClientConnect(server: BunPreflightHttpServer, callback: (client: BunWsClient) => void): void {
+  override bindClientConnect(server: BunServerInstance, callback: (client: BunWsClient) => void): void {
     this.onOpenHandler = callback as (ws: ServerWebSocket<unknown>) => void
   }
 
@@ -178,7 +178,7 @@ export class BunWsAdapter extends AbstractWsAdapter<BunPreflightHttpServer, BunW
   // Private Helpers
   // ───────────────────────────────────────────────────────────────────────────
 
-  private initializeGlobalHandlers(server: BunPreflightHttpServer): void {
+  private initializeGlobalHandlers(server: BunServerInstance): void {
     if (this.globalHandlersInitialized) {
       return
     }

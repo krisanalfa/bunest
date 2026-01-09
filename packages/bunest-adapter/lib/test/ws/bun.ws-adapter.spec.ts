@@ -20,7 +20,7 @@ import { tmpdir } from 'node:os'
 
 import { BunWsAdapter, BunWsAdapterOptions } from '../../bun.ws-adapter.js'
 import { BunAdapter } from '../../bun.adapter.js'
-import { BunPreflightHttpServer } from '../../bun.preflight-http-server.js'
+import { BunServerInstance } from '../../bun.server-instance.js'
 import { WsData } from '../../bun.internal.types.js'
 
 @WebSocketGateway<BunWsAdapterOptions>({ cors: true })
@@ -285,7 +285,7 @@ describe('BunWsAdapter Basic', () => {
     @WebSocketGateway<BunWsAdapterOptions>({ cors: true, publishToSelf: true })
     class ChatGateway implements OnGatewayConnection {
       @WebSocketServer()
-      readonly server!: BunPreflightHttpServer
+      readonly server!: BunServerInstance
 
       private readonly roomName = randomUUIDv7()
 
@@ -532,6 +532,7 @@ describe('BunWsAdapter Basic', () => {
 
     it('should provide client data from factory', async () => {
       const socket = new WebSocket(url.replace('http', 'ws'), {
+        // @ts-expect-error false positive, Bun WebSocket supports headers
         headers: { 'x-user-id': 'test-user' },
       })
       const result = await new Promise<unknown>((resolve) => {

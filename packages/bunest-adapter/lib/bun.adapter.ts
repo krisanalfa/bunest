@@ -17,7 +17,6 @@ import { AbstractHttpAdapter } from '@nestjs/core'
 import { VersionValue } from '@nestjs/common/interfaces/version-options.interface.js'
 
 import { BunStaticAssetsOptions, BunWsClientData, ServerOptions } from './bun.internal.types.js'
-import { BunPreflightHttpServer } from './bun.preflight-http-server.js'
 import { BunRequest } from './bun.request.js'
 import { BunResponse } from './bun.response.js'
 import { BunServerInstance } from './bun.server-instance.js'
@@ -31,11 +30,11 @@ export class BunAdapter extends AbstractHttpAdapter<
   private readonly logger: Logger = new Logger('BunAdapter', { timestamp: true })
   declare protected instance: BunServerInstance
 
-  constructor(protected bunServeOptions: ServerOptions<BunWsClientData> = {
+  constructor(protected bunServeOptions: ServerOptions = {
     development: false,
     id: randomUUIDv7(),
   }) {
-    super(new BunServerInstance(bunServeOptions))
+    super(new BunServerInstance(bunServeOptions as ServerOptions<BunWsClientData>))
   }
 
   useStaticAssets(path: string, options?: BunStaticAssetsOptions) {
@@ -53,15 +52,15 @@ export class BunAdapter extends AbstractHttpAdapter<
   }
 
   async close() {
-    await this.instance.close()
+    await this.instance.stop(true)
   }
 
   initHttpServer(options: NestApplicationOptions) {
     this.configureTls(options)
-    const preflightServer = new BunPreflightHttpServer(this.instance)
-    // Hack to set the http server instance before listen is called
-    this.setHttpServer(preflightServer as unknown as Server<unknown>)
-    return preflightServer
+    // Set the server instance as the http server before listen is called
+    // BunServerInstance implements BaseWsInstance for NestJS WebSocket compatibility
+    this.setHttpServer(this.instance as unknown as Server<unknown>)
+    return this.instance
   }
 
   getRequestHostname(request: BunRequest) {
@@ -148,7 +147,8 @@ export class BunAdapter extends AbstractHttpAdapter<
   }
 
   getType(): string {
-    return 'bun'
+    // NestJS only recognizes 'express' and 'fastify' for GraphQL over HTTP support
+    return this.bunServeOptions.withGraphQL ? 'express' : 'bun'
   }
 
   applyVersionFilter(

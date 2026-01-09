@@ -5,11 +5,11 @@ import {
 import { Serve, Server, ServerWebSocket, WebSocketHandler } from 'bun'
 import { INestApplication } from '@nestjs/common'
 
-import { BunPreflightHttpServer } from './bun.preflight-http-server.js'
 import { BunRequest } from './bun.request.js'
+import { BunServerInstance } from './bun.server-instance.js'
 
-export interface WsOptions extends Pick<
-  WebSocketHandler<unknown>,
+export interface WsOptions<TWebSocketData = unknown> extends Pick<
+  WebSocketHandler<TWebSocketData>,
   | 'maxPayloadLength'
   | 'idleTimeout'
   | 'backpressureLimit'
@@ -19,7 +19,23 @@ export interface WsOptions extends Pick<
   | 'perMessageDeflate'
 > {
   cors?: true | CorsOptions | CorsOptionsDelegate<BunRequest>
-  clientDataFactory?: (req: BunRequest) => unknown
+  /**
+   * Factory to create the client data for each WebSocket connection.
+   *
+   * @param req The incoming Bun request
+   * @returns The client data object to be associated with the WebSocket connection
+   */
+  clientDataFactory?: (req: BunRequest) => TWebSocketData
+}
+
+export type GraphQLWsOptions<TWebSocketData = unknown> = WebSocketHandler<TWebSocketData> & {
+  /**
+   * Factory to create the client data for each WebSocket connection.
+   *
+   * @param req The incoming Bun request
+   * @returns The client data object to be associated with the WebSocket connection
+   */
+  clientDataFactory?: WsOptions['clientDataFactory']
 }
 
 export type ServerOptions<TWebSocketData = unknown> = Pick<
@@ -32,7 +48,24 @@ export type ServerOptions<TWebSocketData = unknown> = Pick<
   | 'websocket'
   | 'port'
   | 'hostname'
->
+> & {
+  /**
+   * Whether to support GraphQL over HTTP.
+   *
+   * There's known limitation with NestJS Apollo GraphQL module where
+   * it doesn't support any other HTTP adapters except Express and Fastify.
+   * When this option is enabled, Bunest adapter will override the `getType` method
+   * of the underlying Bun HTTP server to always return 'express' so that
+   * NestJS Apollo module can work correctly.
+   *
+   * If you supply a WebSocketHandler here, it will be used for handling
+   * WebSocket connections instead of the default one. This is mainly used for subscriptions.
+   * If you don't use subscriptions, you can just set this to `true`.
+   *
+   * @default false
+   */
+  withGraphQL?: boolean | GraphQLWsOptions<TWebSocketData>
+}
 
 export type WsData = string | Buffer | ArrayBuffer | Buffer[]
 
@@ -77,7 +110,7 @@ export interface BunStaticAssetsOptions {
   useStatic?: boolean
 }
 
-export interface NestBunApplication extends INestApplication<BunPreflightHttpServer> {
+export interface NestBunApplication extends INestApplication<BunServerInstance> {
   useStaticAssets(path: string, options?: BunStaticAssetsOptions): void
   enableCors(options?: CorsOptions | CorsOptionsDelegate<BunRequest>): void
 }

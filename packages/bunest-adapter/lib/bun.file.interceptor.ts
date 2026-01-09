@@ -26,7 +26,7 @@ export class BunFileInterceptor implements NestInterceptor {
       request.files.map(async (file) => {
         const destPath = join(this.uploadDir as unknown as string, basename(file.name))
         await Bun.write(destPath, file)
-        return Bun.file(destPath) as File
+        return Bun.file(destPath) as unknown as File
       }),
     )
     request.setFile(files[0])
