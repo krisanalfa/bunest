@@ -1267,13 +1267,13 @@ await client.mutate({
 
 ### GraphQL Yoga Driver (Recommended)
 
-For better performance, we provide a native `BunYogaDriver` that uses [GraphQL Yoga](https://the-guild.dev/graphql/yoga-server) instead of Apollo Server. **This driver is ~35% faster than Apollo Server** and utilizes all Bun's native features without compatibility layers.
+For better performance, we provide a native `BunYogaDriver` that uses [GraphQL Yoga](https://the-guild.dev/graphql/yoga-server) instead of Apollo Server. **This driver is ~57% faster than Apollo Server** and utilizes all Bun's native features without compatibility layers.
 
 | Framework                       | Requests per Second |
-|---------------------------------|---------------------|
-| Bun Adapter + Apollo Server     | 16066.2553 rps      |
-| Bun Adapter + GraphQL Yoga      | 21773.3745 rps      |
-| Express Adapter + Apollo Server | 12523.1951 rps      |
+| ------------------------------- | ------------------- |
+| Bun Adapter + Apollo Server     | 16,066.25 rps       |
+| Bun Adapter + GraphQL Yoga      | 25,283.39 rps       |
+| Express Adapter + Apollo Server | 12,523.19 rps       |
 
 #### Basic Setup
 
