@@ -1,5 +1,5 @@
 /* eslint-disable sonarjs/no-nested-assignment */
-import { CookieMap, BunRequest as NativeRequest } from 'bun'
+import { CookieMap, BunRequest as NativeRequest, Server } from 'bun'
 import { ParsedQs, parse } from 'qs'
 
 // Optimized headers type - use native Headers for hot-path .get()
@@ -52,7 +52,7 @@ export class BunRequest {
   readonly method: string
   readonly params: Record<string, string>
 
-  constructor(private readonly nativeRequest: NativeRequest) {
+  constructor(private readonly nativeRequest: NativeRequest, public readonly server: Server<unknown>) {
     this._parsedUrl = new URL(nativeRequest.url)
     this._nativeHeaders = nativeRequest.headers
     this.method = nativeRequest.method
@@ -450,7 +450,7 @@ export class BunRequest {
    * ```
    */
   clone(): BunRequest {
-    const cloned = new BunRequest(this.nativeRequest.clone())
+    const cloned = new BunRequest(this.nativeRequest.clone(), this.server)
     // _nativeHeaders and _parsedUrl are set in constructor
     cloned._hostname = this._hostname
     cloned._pathname = this._pathname

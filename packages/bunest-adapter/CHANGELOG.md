@@ -25,5 +25,10 @@
 - Added `express-session` middleware support (experimental, use with caution).
 
 ### 0.6.0-rc.1
+- Breaking changes:
+  - Removed `BunPreflightServer`, now `BunServerInstance` handles all server configuration directly.
 - Added GraphQL support via `@nestjs/graphql` module.
 - Added Yoga driver for GraphQL integration.
+
+### 0.6.0
+- Added middleware support for GraphQL requests.

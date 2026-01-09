@@ -1,6 +1,6 @@
 {
   "name": "@krisanalfa/bunest-adapter",
-  "version": "0.6.0-rc.1",
+  "version": "0.6.0",
   "description": "High-performance Bun adapter for NestJS framework",
   "type": "module",
   "main": "./dist/index.js",

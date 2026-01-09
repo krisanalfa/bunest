@@ -96,6 +96,7 @@ describe('BunAdapter GraphQL Yoga', () => {
   let client: ApolloClient
   let url: string
   let connectedClientUid: string | null = null
+  let middlewareCalled = false
 
   @Module({
     imports: [
@@ -128,6 +129,11 @@ describe('BunAdapter GraphQL Yoga', () => {
     await app.listen(0)
     const server = app.getHttpServer().getBunServer()
     url = server!.url.toString()
+
+    app.getHttpServer().use((req, res, next) => {
+      middlewareCalled = true
+      next?.()
+    })
 
     const httpLink = new HttpLink({
       uri: `${url}graphql`,
@@ -164,6 +170,7 @@ describe('BunAdapter GraphQL Yoga', () => {
   })
 
   beforeEach(() => {
+    middlewareCalled = false
     connectedClientUid = null
   })
 
@@ -207,6 +214,7 @@ describe('BunAdapter GraphQL Yoga', () => {
     expect(human!.name).toBe('John Doe')
     // sex will be uppercased by middleware
     expect(human!.sex).toBe('MALE')
+    expect(middlewareCalled).toBe(true)
   })
 
   it('should fetch all humans', async () => {

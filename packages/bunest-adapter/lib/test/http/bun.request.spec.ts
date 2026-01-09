@@ -108,6 +108,7 @@ class RequestTestController {
       clonedHostname: cloned.hostname,
       originalKey: cloned.get('originalKey'),
       isSameInstance: req === cloned,
+      isSameServer: req.server === cloned.server,
     }
   }
 
@@ -150,6 +151,11 @@ class RequestTestController {
       emitSupported: typeof req.emit === 'function',
       emitResult,
     }
+  }
+
+  @Get('server')
+  getServer(@Req() req: BunRequest) {
+    return { hasServer: !!req.server }
   }
 }
 
@@ -332,10 +338,20 @@ describe('BunRequest', () => {
         clonedHostname: string
         originalKey: string
         isSameInstance: boolean
+        isSameServer: boolean
       }
       expect(data.originalHostname).toBe(data.clonedHostname)
       expect(data.originalKey).toBe('originalValue')
       expect(data.isSameInstance).toBe(false)
+      expect(data.isSameServer).toBe(true)
+    })
+  })
+
+  describe('Server Property', () => {
+    it('should have access to server instance', async () => {
+      const response = await fetch('http://localhost/request/server', { unix: socket })
+      const data = (await response.json()) as { hasServer: boolean }
+      expect(data.hasServer).toBe(true)
     })
   })
 

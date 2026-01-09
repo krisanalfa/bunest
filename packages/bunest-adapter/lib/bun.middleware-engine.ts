@@ -4,36 +4,36 @@ import { ErrorLike, peek } from 'bun'
 import { BunRequest } from './bun.request.js'
 import { BunResponse } from './bun.response.js'
 
-type MiddlewareHandler = RequestHandler<BunRequest, BunResponse>
+export type BunRequestHandler = RequestHandler<BunRequest, BunResponse>
 interface MiddlewareRunOptions {
   req: BunRequest
   res: BunResponse
   method: string
   path: string
-  requestHandler: MiddlewareHandler
+  requestHandler: BunRequestHandler
 }
 
 // Shared empty array to avoid allocations
-const EMPTY_HANDLERS: readonly MiddlewareHandler[] = new Array<MiddlewareHandler>(0)
+const EMPTY_HANDLERS: readonly BunRequestHandler[] = new Array<BunRequestHandler>(0)
 
 // Reusable noop function for error handler
 const noop = (): void => { /* noop */ }
 
 export class BunMiddlewareEngine {
-  private readonly globalMiddlewares: MiddlewareHandler[] = []
-  private readonly routeMiddleware = new Map<string, MiddlewareHandler[]>()
+  private readonly globalMiddlewares: BunRequestHandler[] = []
+  private readonly routeMiddleware = new Map<string, BunRequestHandler[]>()
   // Group route middleware by method for faster prefix matching
-  private readonly routeMiddlewareByMethod = new Map<string, Map<string, MiddlewareHandler[]>>()
-  private readonly wildcardMiddleware = new Map<string, MiddlewareHandler[]>()
-  private readonly middlewareCache = new Map<string, MiddlewareHandler[]>()
+  private readonly routeMiddlewareByMethod = new Map<string, Map<string, BunRequestHandler[]>>()
+  private readonly wildcardMiddleware = new Map<string, BunRequestHandler[]>()
+  private readonly middlewareCache = new Map<string, BunRequestHandler[]>()
   private errorHandler: ErrorHandler<BunRequest, BunResponse> | null = null
-  private notFoundHandler: MiddlewareHandler | null = null
+  private notFoundHandler: BunRequestHandler | null = null
 
-  useGlobal(middleware: MiddlewareHandler): void {
+  useGlobal(middleware: BunRequestHandler): void {
     this.globalMiddlewares.push(middleware)
   }
 
-  useRoute(method: string, path: string, middleware: MiddlewareHandler): void {
+  useRoute(method: string, path: string, middleware: BunRequestHandler): void {
     const key = `${method}:${path}`;
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     (this.routeMiddleware.get(key) ?? (this.routeMiddleware.set(key, []).get(key)!)).push(middleware);
@@ -44,7 +44,7 @@ export class BunMiddlewareEngine {
       .push(middleware)
   }
 
-  useWildcard(method: string, middleware: MiddlewareHandler): void {
+  useWildcard(method: string, middleware: BunRequestHandler): void {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     (this.wildcardMiddleware.get(method) ?? this.wildcardMiddleware.set(method, []).get(method)!).push(middleware)
   }
@@ -53,11 +53,11 @@ export class BunMiddlewareEngine {
     this.errorHandler = handler
   }
 
-  useNotFoundHandler(handler: MiddlewareHandler): void {
+  useNotFoundHandler(handler: BunRequestHandler): void {
     this.notFoundHandler = handler
   }
 
-  findRouteHandler(method: string, path: string): MiddlewareHandler | null {
+  findRouteHandler(method: string, path: string): BunRequestHandler | null {
     // Try exact match first (method-specific, then ALL)
     const exactHandler = this.findExactRouteHandler(method, path)
     if (exactHandler) return exactHandler
@@ -66,7 +66,7 @@ export class BunMiddlewareEngine {
     return this.findPrefixRouteHandler(method, path)
   }
 
-  private findExactRouteHandler(method: string, path: string): MiddlewareHandler | null {
+  private findExactRouteHandler(method: string, path: string): BunRequestHandler | null {
     const exactKey = `${method}:${path}`
     const exactMiddleware = this.routeMiddleware.get(exactKey)
     if (exactMiddleware && exactMiddleware.length > 0) {
@@ -82,13 +82,13 @@ export class BunMiddlewareEngine {
     return null
   }
 
-  private findPrefixRouteHandler(method: string, path: string): MiddlewareHandler | null {
+  private findPrefixRouteHandler(method: string, path: string): BunRequestHandler | null {
     const methodMap = this.routeMiddlewareByMethod.get(method)
     const allMethodMap = this.routeMiddlewareByMethod.get('ALL')
 
     if (!methodMap && !allMethodMap) return null
 
-    const mapsToCheck: Map<string, MiddlewareHandler[]>[] = []
+    const mapsToCheck: Map<string, BunRequestHandler[]>[] = []
     if (methodMap) mapsToCheck.push(methodMap)
     if (allMethodMap) mapsToCheck.push(allMethodMap)
 
@@ -96,10 +96,10 @@ export class BunMiddlewareEngine {
   }
 
   private findBestMatchInMaps(
-    maps: Map<string, MiddlewareHandler[]>[],
+    maps: Map<string, BunRequestHandler[]>[],
     path: string,
-  ): MiddlewareHandler | null {
-    let bestMatch: MiddlewareHandler | null = null
+  ): BunRequestHandler | null {
+    let bestMatch: BunRequestHandler | null = null
     let bestMatchLength = 0
     const pathLen = path.length
 
@@ -123,7 +123,7 @@ export class BunMiddlewareEngine {
   }
 
   private async executeHandler(
-    handler: MiddlewareHandler | undefined,
+    handler: BunRequestHandler | undefined,
     req: BunRequest,
     res: BunResponse,
     next: () => Promise<void>,
@@ -148,7 +148,7 @@ export class BunMiddlewareEngine {
     }
   }
 
-  private getMiddlewareChain(method: string, path: string): MiddlewareHandler[] {
+  private getMiddlewareChain(method: string, path: string): BunRequestHandler[] {
     const cacheKey = `${method}:${path}`
     let cached = this.middlewareCache.get(cacheKey)
     if (cached !== undefined) return cached
@@ -162,7 +162,7 @@ export class BunMiddlewareEngine {
     method: string,
     path: string,
     cacheKey: string,
-  ): MiddlewareHandler[] {
+  ): BunRequestHandler[] {
     // Minimize array operations and allocations
     const global = this.globalMiddlewares
     const globalLen = global.length
@@ -175,10 +175,10 @@ export class BunMiddlewareEngine {
     const routeLen = routeMiddleware.length
 
     const totalLen = globalLen + wildcardAllLen + wildcardMethodLen + routeLen
-    if (totalLen === 0) return EMPTY_HANDLERS as MiddlewareHandler[]
+    if (totalLen === 0) return EMPTY_HANDLERS as BunRequestHandler[]
 
     // Avoid iterator overhead from for...of loops
-    const chain = new Array<MiddlewareHandler>(totalLen)
+    const chain = new Array<BunRequestHandler>(totalLen)
     let idx = 0
 
     // Global middlewares
@@ -197,7 +197,7 @@ export class BunMiddlewareEngine {
     method: string,
     path: string,
     cacheKey: string,
-  ): readonly MiddlewareHandler[] {
+  ): readonly BunRequestHandler[] {
     const exactMiddleware = this.routeMiddleware.get(cacheKey)
     if (exactMiddleware !== undefined) return exactMiddleware
     return this.findBestPrefixMatch(method, path)
@@ -206,11 +206,11 @@ export class BunMiddlewareEngine {
   private findBestPrefixMatch(
     method: string,
     path: string,
-  ): readonly MiddlewareHandler[] {
+  ): readonly BunRequestHandler[] {
     const methodMap = this.routeMiddlewareByMethod.get(method)
     if (!methodMap) return EMPTY_HANDLERS
 
-    let bestMatch: MiddlewareHandler[] | null = null
+    let bestMatch: BunRequestHandler[] | null = null
     let bestMatchLength = 0
     const pathLen = path.length
 
@@ -229,8 +229,8 @@ export class BunMiddlewareEngine {
   }
 
   private async executeChain(
-    chain: MiddlewareHandler[],
-    requestHandler: MiddlewareHandler,
+    chain: BunRequestHandler[],
+    requestHandler: BunRequestHandler,
     req: BunRequest,
     res: BunResponse,
   ): Promise<void> {

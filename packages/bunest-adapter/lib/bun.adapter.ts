@@ -3,10 +3,6 @@ import {
   CorsOptionsDelegate,
 } from '@nestjs/common/interfaces/external/cors-options.interface.js'
 import {
-  ErrorHandler,
-  RequestHandler,
-} from '@nestjs/common/interfaces/index.js'
-import {
   Logger,
   NestApplicationOptions,
   RequestMethod,
@@ -14,10 +10,12 @@ import {
 } from '@nestjs/common'
 import { Server, randomUUIDv7 } from 'bun'
 import { AbstractHttpAdapter } from '@nestjs/core'
+import { ErrorHandler } from '@nestjs/common/interfaces/index.js'
 import { VersionValue } from '@nestjs/common/interfaces/version-options.interface.js'
 
 import { BunStaticAssetsOptions, BunWsClientData, ServerOptions } from './bun.internal.types.js'
 import { BunRequest } from './bun.request.js'
+import { BunRequestHandler } from './bun.middleware-engine.js'
 import { BunResponse } from './bun.response.js'
 import { BunServerInstance } from './bun.server-instance.js'
 import { BunVersionFilterMiddleware } from './bun.version-filter.middleware.js'
@@ -104,7 +102,7 @@ export class BunAdapter extends AbstractHttpAdapter<
   }
 
   setNotFoundHandler(
-    handler: RequestHandler<BunRequest, BunResponse>,
+    handler: BunRequestHandler,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     prefix?: string,
   ) {

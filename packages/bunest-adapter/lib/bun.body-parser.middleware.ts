@@ -11,6 +11,7 @@ export class BunBodyParserMiddleware {
   private readonly prefix: string | null
   private readonly rawBody: boolean
   private readonly prefixLen: number
+  private readonly skippedPaths = new Set<string>()
 
   constructor(options?: { prefix?: string, rawBody?: boolean }) {
     this.prefix = options?.prefix ?? null
@@ -18,16 +19,22 @@ export class BunBodyParserMiddleware {
     this.rawBody = options?.rawBody ?? false
   }
 
+  skip(path: string): void {
+    this.skippedPaths.add(path)
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
   async run(req: BunRequest, res: BunResponse, next?: Function): Promise<void> {
     // Fast path: skip body parsing for methods that don't have body
     // Use charCodeAt for fast string comparison
+    const pathname = req.pathname
     const methodFirstChar = req.method.charCodeAt(0)
     if (
       methodFirstChar === GET_CODE // Most common case first
       || methodFirstChar === HEAD_CODE
       || methodFirstChar === DELETE_CODE
       || methodFirstChar === OPTIONS_CODE
+      || this.skippedPaths.has(pathname)
     ) {
       next?.()
       return
@@ -35,7 +42,6 @@ export class BunBodyParserMiddleware {
 
     // Check prefix if specified
     if (this.prefix !== null) {
-      const pathname = req.pathname
       if (pathname.length < this.prefixLen || !pathname.startsWith(this.prefix)) {
         next?.()
         return

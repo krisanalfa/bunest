@@ -223,17 +223,31 @@ export class BunYogaDriver extends AbstractGraphQLDriver<BunYogaDriverConfig> {
 
   private configureRoutes(config: BunYogaDriverConfig, yoga: ReturnType<typeof createYoga<Server<unknown>>>) {
     const server = this.httpAdapterHost.httpAdapter.getHttpServer() as BunServerInstance
-    server.nativePost(yoga.graphqlEndpoint, (req, srv) => yoga.handleRequest(req, srv))
-    server.nativeOptions(yoga.graphqlEndpoint, (req, srv) => yoga.handleRequest(req, srv)) // CORS preflight
-    if (config.graphiql ?? true) { // by default, enable GraphiQL
-      // If GraphiQL is enabled, also handle GET requests to the GraphQL endpoint
-      server.nativeGet(yoga.graphqlEndpoint, (req, srv) => yoga.handleRequest(req, srv))
-    }
+    // Skip body parser for GraphQL endpoint
+    server.skipParserMiddleware(yoga.graphqlEndpoint)
+    // Main GraphQL endpoint
+    server.post(yoga.graphqlEndpoint, async (req, res) => {
+      const body = await yoga.handleRequest(req.original(), req.server)
+      res.end(body)
+    })
+    // Handle upgrade for subscriptions as well as graphiql if enabled
+    server.get(yoga.graphqlEndpoint, async (req, res) => {
+      if (await server.upgrade(req.original(), req)) {
+        return
+      }
+      const body = await yoga.handleRequest(req.original(), req.server)
+      res.end(body)
+    })
+    // Handle OPTIONS requests for CORS preflight
+    server.options(yoga.graphqlEndpoint, async (req, res) => {
+      const body = await yoga.handleRequest(req.original(), req.server)
+      res.end(body)
+    })
     // Health check endpoint
-    server.nativeGet(
-      config.healthCheckEndpoint ?? '/health',
-      (req, srv) => yoga.handleRequest(req, srv),
-    )
+    server.get(config.healthCheckEndpoint ?? '/health', async (req, res) => {
+      const body = await yoga.handleRequest(req.original(), req.server)
+      res.end(body)
+    })
   }
 
   private configureSubscriptions(config: BunYogaDriverConfig, yoga: ReturnType<typeof createYoga<Server<unknown>>>) {

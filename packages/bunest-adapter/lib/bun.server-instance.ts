@@ -5,14 +5,13 @@ import {
 import { Logger, RequestMethod } from '@nestjs/common'
 import { BunRequest as NativeRequest, Serve, Server, ServerWebSocket, WebSocketHandler, randomUUIDv7 } from 'bun'
 import { BaseWsInstance } from '@nestjs/websockets'
-import { RequestHandler } from '@nestjs/common/interfaces/index.js'
 import { join } from 'node:path'
 import { readdir } from 'node:fs/promises'
 
+import { BunMiddlewareEngine, BunRequestHandler } from './bun.middleware-engine.js'
 import { BunStaticAssetsOptions, BunWsClientData, GraphQLWsOptions, ServerOptions, WsData, WsHandlers, WsOptions } from './bun.internal.types.js'
 import { BunBodyParserMiddleware } from './bun.body-parser.middleware.js'
 import { BunCorsMiddleware } from './bun.cors.middleware.js'
-import { BunMiddlewareEngine } from './bun.middleware-engine.js'
 import { BunRequest } from './bun.request.js'
 import { BunResponse } from './bun.response.js'
 import { BunVersionFilterMiddleware } from './bun.version-filter.middleware.js'
@@ -55,6 +54,7 @@ type PathHandler = Partial<
 export class BunServerInstance implements BaseWsInstance {
   private readonly logger: Logger = new Logger('BunServerInstance', { timestamp: true })
   private readonly middlewareEngine = new BunMiddlewareEngine()
+  private bunBodyParserMiddleware: BunBodyParserMiddleware | null = null
   private useVersioning = false
 
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -63,10 +63,10 @@ export class BunServerInstance implements BaseWsInstance {
   // Store multiple handlers per route/method for version chaining
   private readonly routeHandlers = new Map<
     string,
-    RequestHandler<BunRequest, BunResponse>[]
+    BunRequestHandler[]
   >()
 
-  private notFoundHandler: RequestHandler<BunRequest, BunResponse> = (
+  private notFoundHandler: BunRequestHandler = (
     req,
     res,
   ) => {
@@ -102,8 +102,8 @@ export class BunServerInstance implements BaseWsInstance {
   // ============================================
 
   use(
-    maybePath: string | RequestHandler<BunRequest, BunResponse>,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybePath: string | BunRequestHandler,
+    maybeHandler?: BunRequestHandler,
   ): void {
     if (typeof maybePath === 'string') {
       let path = maybePath
@@ -129,7 +129,7 @@ export class BunServerInstance implements BaseWsInstance {
   private createHttpMethodHandler(httpMethod: Serve.HTTPMethod) {
     return (
       pathOrHandler: unknown,
-      maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+      maybeHandler?: BunRequestHandler,
     ): void => {
       const { path, handler } = this.parseRouteHandler(
         pathOrHandler,
@@ -141,14 +141,14 @@ export class BunServerInstance implements BaseWsInstance {
 
   get(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createHttpMethodHandler('GET')(pathOrHandler, maybeHandler)
   }
 
   post(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createHttpMethodHandler('POST')(pathOrHandler, maybeHandler)
   }
@@ -180,35 +180,35 @@ export class BunServerInstance implements BaseWsInstance {
 
   put(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createHttpMethodHandler('PUT')(pathOrHandler, maybeHandler)
   }
 
   patch(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createHttpMethodHandler('PATCH')(pathOrHandler, maybeHandler)
   }
 
   delete(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createHttpMethodHandler('DELETE')(pathOrHandler, maybeHandler)
   }
 
   head(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createHttpMethodHandler('HEAD')(pathOrHandler, maybeHandler)
   }
 
   options(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createHttpMethodHandler('OPTIONS')(pathOrHandler, maybeHandler)
   }
@@ -219,7 +219,7 @@ export class BunServerInstance implements BaseWsInstance {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       pathOrHandler: unknown,
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+      maybeHandler?: BunRequestHandler,
     ): void => {
       throw new Error('Not supported.')
     }
@@ -227,63 +227,63 @@ export class BunServerInstance implements BaseWsInstance {
 
   all(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   propfind(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   proppatch(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   mkcol(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   copy(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   move(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   lock(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   unlock(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
 
   search(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
+    maybeHandler?: BunRequestHandler,
   ): void {
     this.createUnsupportedMethod()(pathOrHandler, maybeHandler)
   }
@@ -323,9 +323,9 @@ export class BunServerInstance implements BaseWsInstance {
     this.setupWebSocketIfNeeded(wsHandlers, bunServeOptions)
 
     const fetch = async (request: NativeRequest, server: Server<unknown>): Promise<Response> => {
-      const bunRequest = new BunRequest(request)
+      const bunRequest = new BunRequest(request, server)
       // Just in case we don't have any controllers/routes registered, this will handle websocket upgrade requests
-      if (await this.upgradeWebSocket(request, bunRequest, server)) {
+      if (await this.upgrade(request, bunRequest)) {
         return undefined as unknown as Response
       }
 
@@ -475,7 +475,7 @@ export class BunServerInstance implements BaseWsInstance {
   /**
    * Set the not found handler
    */
-  setNotFoundHandler(handler: RequestHandler<BunRequest, BunResponse>): void {
+  setNotFoundHandler(handler: BunRequestHandler): void {
     this.notFoundHandler = handler
   }
 
@@ -490,14 +490,18 @@ export class BunServerInstance implements BaseWsInstance {
     this.bunServeOptions.withGraphQL = handlers as unknown as WebSocketHandler<BunWsClientData>
   }
 
+  skipParserMiddleware(path: string): void {
+    this.bunBodyParserMiddleware?.skip(path)
+  }
+
   /**
    * Register body parser middleware
    */
   registerParserMiddleware(prefix?: string, rawBody?: boolean): void {
     // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
     this.logger.log(`Registering Body Parser Middleware with prefix: ${prefix || '/'} and rawBody: ${rawBody ? 'true' : 'false'}`)
-    const bodyParser = new BunBodyParserMiddleware({ prefix, rawBody })
-    this.middlewareEngine.useGlobal(bodyParser.run.bind(bodyParser))
+    this.bunBodyParserMiddleware = new BunBodyParserMiddleware({ prefix, rawBody })
+    this.middlewareEngine.useGlobal(this.bunBodyParserMiddleware.run.bind(this.bunBodyParserMiddleware))
   }
 
   /**
@@ -517,7 +521,7 @@ export class BunServerInstance implements BaseWsInstance {
       if (path === '*' || path === '/*') {
         this.middlewareEngine.useWildcard(
           methodName,
-          callback as RequestHandler<BunRequest, BunResponse>,
+          callback as BunRequestHandler,
         )
         return
       }
@@ -527,7 +531,7 @@ export class BunServerInstance implements BaseWsInstance {
       this.middlewareEngine.useRoute(
         methodName,
         normalizedPath,
-        callback as RequestHandler<BunRequest, BunResponse>,
+        callback as BunRequestHandler,
       )
     }
   }
@@ -598,17 +602,16 @@ export class BunServerInstance implements BaseWsInstance {
     return response.headers
   }
 
-  private async upgradeWebSocket(
+  async upgrade(
     request: NativeRequest,
     bunRequest: BunRequest,
-    server: Server<BunWsClientData>,
   ): Promise<boolean> {
     if (!this.useWs || !this.isWebSocketUpgradeRequest(request)) {
       return false
     }
 
     const headers = this.useWsCors ? await this.provideCorsHeaders(bunRequest) : undefined
-    return server.upgrade(
+    return bunRequest.server.upgrade(
       request, {
         headers,
         data: (await this.wsOptions.clientDataFactory?.(bunRequest)) ?? {},
@@ -696,8 +699,14 @@ export class BunServerInstance implements BaseWsInstance {
     bunServeOptions: ServerOptions<BunWsClientData>,
   ): void {
     const useWs
-      = (typeof bunServeOptions.withGraphQL === 'object' && typeof bunServeOptions.withGraphQL.open === 'function')
-        || (!!wsHandlers.onOpen && !!wsHandlers.onMessage && !!wsHandlers.onClose)
+      = (
+        typeof bunServeOptions.withGraphQL === 'object'
+        && !!bunServeOptions.withGraphQL.open
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        && !!bunServeOptions.withGraphQL.message
+        && !!bunServeOptions.withGraphQL.close
+      )
+      || (!!wsHandlers.onOpen && !!wsHandlers.onMessage && !!wsHandlers.onClose)
     if (!useWs) return
 
     this.useWs = true
@@ -779,7 +788,7 @@ export class BunServerInstance implements BaseWsInstance {
   private delegateRouteHandler(
     method: Serve.HTTPMethod,
     path: string,
-    handler: RequestHandler<BunRequest, BunResponse>,
+    handler: BunRequestHandler,
   ): void {
     this.ensureRouteExists(path)
     const requestHandler = this.prepareRequestHandler(method, path, handler)
@@ -800,8 +809,8 @@ export class BunServerInstance implements BaseWsInstance {
   private prepareRequestHandler(
     method: Serve.HTTPMethod,
     path: string,
-    handler: RequestHandler<BunRequest, BunResponse>,
-  ): RequestHandler<BunRequest, BunResponse> {
+    handler: BunRequestHandler,
+  ): BunRequestHandler {
     // Hot path: if versioning is not used, return the original handler
     if (!this.useVersioning) return handler
     // Create handler that wraps array + fallback into a single callable
@@ -815,15 +824,15 @@ export class BunServerInstance implements BaseWsInstance {
   private createRouteFetchHandler(
     path: string,
     method: Serve.HTTPMethod,
-    requestHandler: RequestHandler<BunRequest, BunResponse>,
+    requestHandler: BunRequestHandler,
   ): (request: NativeRequest, server: Server<unknown>) => Promise<Response> {
     return async (
       request: NativeRequest,
       server: Server<unknown>,
     ): Promise<Response> => {
-      const bunRequest = new BunRequest(request)
+      const bunRequest = new BunRequest(request, server)
       // Just in case we have controllers/routes registered, this will handle websocket upgrade requests, but only for root path
-      if (path === '/' && (await this.upgradeWebSocket(request, bunRequest, server))) {
+      if (path === '/' && (await this.upgrade(request, bunRequest))) {
         return undefined as unknown as Response
       }
 
@@ -842,7 +851,7 @@ export class BunServerInstance implements BaseWsInstance {
   private createVersioningHandlers(
     method: Serve.HTTPMethod,
     path: string,
-    handler: RequestHandler<BunRequest, BunResponse>,
+    handler: BunRequestHandler,
   ) {
     // Store handler in the handlers array for chaining (versioning support)
     const routeKey = `${method}:${path}`
@@ -857,7 +866,7 @@ export class BunServerInstance implements BaseWsInstance {
   }
 
   private async executeHandlerChain(
-    handlers: RequestHandler<BunRequest, BunResponse>[],
+    handlers: BunRequestHandler[],
     req: BunRequest,
     res: BunResponse,
   ): Promise<void> {
@@ -876,9 +885,9 @@ export class BunServerInstance implements BaseWsInstance {
   }
 
   private createChainedHandlerForVersioningResolution(
-    handlers: RequestHandler<BunRequest, BunResponse>[],
-    notFoundHandler: RequestHandler<BunRequest, BunResponse>,
-  ): RequestHandler<BunRequest, BunResponse> {
+    handlers: BunRequestHandler[],
+    notFoundHandler: BunRequestHandler,
+  ): BunRequestHandler {
     // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
     return (async (req: BunRequest, res: BunResponse, next?: Function): Promise<void> => {
       // First pass: discovery for versioning
@@ -898,29 +907,29 @@ export class BunServerInstance implements BaseWsInstance {
       if (!res.isEnded()) {
         notFoundHandler(req, res, next)
       }
-    }) as RequestHandler<BunRequest, BunResponse>
+    }) as BunRequestHandler
   }
 
   private mapRequestMethodToString(requestMethod: RequestMethod): string {
     return REQUEST_METHOD_STRINGS[requestMethod] ?? 'ALL'
   }
 
-  private parseRouteHandler(handler: RequestHandler<BunRequest, BunResponse>): {
+  private parseRouteHandler(handler: BunRequestHandler): {
     path: string
-    handler: RequestHandler<BunRequest, BunResponse>
+    handler: BunRequestHandler
   }
   private parseRouteHandler(
     path: unknown,
-    handler?: RequestHandler<BunRequest, BunResponse>,
-  ): { path: string, handler: RequestHandler<BunRequest, BunResponse> }
+    handler?: BunRequestHandler,
+  ): { path: string, handler: BunRequestHandler }
   private parseRouteHandler(
     pathOrHandler: unknown,
-    maybeHandler?: RequestHandler<BunRequest, BunResponse>,
-  ): { path: string, handler: RequestHandler<BunRequest, BunResponse> } {
+    maybeHandler?: BunRequestHandler,
+  ): { path: string, handler: BunRequestHandler } {
     const path = typeof pathOrHandler === 'string' ? pathOrHandler : '/'
     const handler
       = typeof pathOrHandler === 'function'
-        ? (pathOrHandler as RequestHandler<BunRequest, BunResponse>)
+        ? (pathOrHandler as BunRequestHandler)
         // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
         : maybeHandler!
     return { path, handler }
